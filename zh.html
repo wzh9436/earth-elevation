@@ -1,0 +1,1713 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!-- Global Elevation & Ocean Depth Offline Query System | Author: wzh (wzh9436) | https://github.com/wzh9436/earth-elevation | (c) 2026 wzh -->
+<meta charset="UTF-8">
+<meta name="author" content="wzh">
+<meta name="copyright" content="(c) 2026 wzh">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+/* 尽早判断是否需要横屏旋转，避免加载时先显示竖屏（主程序加载完后会按实际尺寸精确设置） */
+(function(){
+  try{
+    var touch=matchMedia('(pointer:coarse)').matches, pref=true;
+    try{ pref=localStorage.getItem('rotLandscape')!=='0'; }catch(e){}
+    var c=document.documentElement.classList;
+    if(touch) c.add('touch');
+    if(touch && pref && innerHeight>innerWidth) c.add('rot');
+  }catch(e){}
+})();
+</script>
+<title>全球海拔与海深离线查询系统 · SRTM / GEBCO</title>
+<style>
+  :root{
+    --ink:#e8f1f8; --dim:#8fb3cc; --accent:#37d5ff; --accent2:#ffb454;
+    --panel:rgba(6,18,30,.86); --line:rgba(80,160,210,.28); --deep:#03121f;
+    --ok:#5fdf8f; --err:#ff6b6b;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--deep);
+    font-family:'Noto Sans SC','Microsoft YaHei',sans-serif;color:var(--ink)}
+  #stage{position:fixed;inset:0}
+  canvas{display:block}
+  #stars{position:fixed;inset:0;z-index:0;pointer-events:none}
+
+  header{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;
+    align-items:flex-start;justify-content:space-between;padding:16px 24px 0;pointer-events:none}
+  .brand{pointer-events:auto}
+  .brand h1{font-weight:700;font-size:clamp(19px,2.6vw,28px);line-height:1.15;margin-top:2px}
+  .brand h1 em{font-style:normal;color:var(--accent2)}
+  .brand h1{display:inline-block;vertical-align:middle}
+  .brand .lang{display:inline-block;vertical-align:middle;margin-left:12px;font-size:11px;padding:2px 10px;border:1px solid var(--line);border-radius:10px;
+    color:var(--accent);text-decoration:none;background:rgba(6,18,30,.6);letter-spacing:.04em}
+  .brand .lang:hover{border-color:var(--accent)}
+  .brand .en{font-size:12px;color:var(--dim);margin-top:4px;font-weight:300;letter-spacing:.06em}
+
+  #panel{position:fixed;left:24px;top:74px;z-index:20;width:320px;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(14px);overflow-x:hidden;overflow-y:auto;
+    box-shadow:0 18px 50px rgba(0,0,0,.5);max-height:calc(100% - 90px)}   /* 来源说明已移到底部中间，控制台可延伸到底部；超出可滚动 */
+  #panel::-webkit-scrollbar{display:none}
+  #panel .ph{position:sticky;top:0;z-index:2;background:rgba(6,18,30,.97)}
+  #panel{scrollbar-width:none;scrollbar-color:transparent transparent;-ms-overflow-style:none}
+  #panel .ph{display:flex;align-items:center;gap:8px;padding:12px 15px;border-bottom:1px solid var(--line);
+    font-weight:600;font-size:13px;letter-spacing:.16em;color:var(--accent)}
+  #panel .ph .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 10px var(--accent);animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .pbody{padding:12px 15px 13px}
+  .row{display:flex;gap:8px;margin-bottom:8px}
+  .fld{flex:1}
+  .fld label{display:block;font-size:10px;color:var(--dim);letter-spacing:.14em;margin-bottom:4px;font-weight:500}
+  .fld input,.fld select{width:100%;background:rgba(20,45,68,.55);border:1px solid var(--line);
+    border-radius:8px;color:var(--ink);font-weight:600;font-size:15px;padding:6px 10px;outline:none;transition:.25s}
+  .fld select{font-size:12px;font-weight:500}
+  .fld label small{display:block;font-size:10px;letter-spacing:.04em;opacity:.75;margin-top:2px;white-space:nowrap}
+  .srch{position:relative;margin-bottom:10px}
+  .srch input{width:100%;background:rgba(20,45,68,.55);border:1px solid var(--line);border-radius:8px;color:var(--ink);
+    font-size:13px;padding:7px 10px;outline:none;font-family:inherit}
+  .srch input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(55,213,255,.15)}
+  .srch-list{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;max-height:240px;overflow-y:auto;
+    background:#06121e;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .srch-list.on{display:block}
+  .srch-item{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:12.5px;cursor:pointer;border-bottom:1px solid rgba(80,160,210,.12)}
+  .srch-item:last-child{border-bottom:none}
+  .srch-item.act,.srch-item:hover{background:rgba(55,213,255,.15)}
+  .srch-item .ty{font-size:10px;padding:1px 6px;border-radius:8px;flex-shrink:0;background:rgba(80,160,210,.18);color:var(--accent)}
+  .srch-item .ty.pl{background:rgba(255,180,84,.18);color:var(--accent2)}
+  .srch-item .en{margin-left:auto;font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%}
+  .srch-empty{padding:8px 10px;font-size:12px;color:var(--dim)}
+  .hint{font-size:10.5px;color:var(--dim);line-height:1.5;margin:-3px 0 8px;opacity:.85}
+  .hint.err{color:var(--err);opacity:1}
+  .fld input:focus,.fld select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(55,213,255,.15)}
+  .btns{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:2px}
+  button{cursor:pointer;border:none;border-radius:8px;font-family:inherit;font-weight:500;
+    font-size:12.5px;padding:8px 6px;letter-spacing:.06em;transition:.22s}
+  .go{grid-column:1/-1;background:linear-gradient(120deg,#0e7fb8,#37d5ff);color:#02121e;font-weight:700;font-size:13.5px}
+  .go:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(55,213,255,.35)}
+  .ghost{background:rgba(80,160,210,.12);border:1px solid var(--line);color:var(--dim)}
+  .ghost:hover{border-color:var(--accent);color:var(--accent)}
+  .chips{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:9px}
+  .chip{font-size:11px;padding:4px 2px;text-align:center;white-space:nowrap;border-radius:20px;cursor:pointer;
+    background:rgba(255,180,84,.1);border:1px solid rgba(255,180,84,.3);color:var(--accent2);transition:.2s}
+  .chip:hover{background:rgba(255,180,84,.25);transform:translateY(-1px)}
+  .layers{margin-top:11px;padding-top:10px;border-top:1px solid var(--line)}
+  .layers .lt{font-size:10px;color:var(--dim);letter-spacing:.2em;margin-bottom:5px;font-weight:500}
+  .tg{display:flex;align-items:center;justify-content:space-between;padding:3px 0;font-size:12.5px}
+  .tg .sw{position:relative;width:34px;height:18px;border-radius:20px;background:rgba(80,160,210,.25);
+    transition:.25s;cursor:pointer;flex-shrink:0}
+  .tg .sw::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:#9cc4dd;transition:.25s}
+  .tg input{display:none}
+  .tg input:checked + .sw{background:var(--accent)}
+  .tg input:checked + .sw::after{left:18px;background:#02121e}
+  .sld{margin-top:6px;font-size:11.5px;color:var(--dim)}
+  .sld input[type=range]{width:100%;margin-top:4px;accent-color:var(--accent)}
+  .dl{margin-top:11px;padding-top:10px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
+  .dl a{display:block;text-align:center;text-decoration:none;font-size:12.5px;padding:9px 6px;border-radius:8px;
+    background:rgba(255,180,84,.12);border:1px solid rgba(255,180,84,.35);color:var(--accent2);letter-spacing:.04em}
+  .dl a:hover{background:rgba(255,180,84,.24)}
+  #licBox{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(2,8,16,.72);padding:16px}
+  #licBox.on{display:flex}
+  .lic-card{width:min(660px,100%);max-height:100%;display:flex;flex-direction:column;background:rgba(6,18,30,.98);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 48px rgba(0,0,0,.6)}
+  .lic-h{display:flex;justify-content:space-between;align-items:center;padding:11px 14px 11px 18px;border-bottom:1px solid var(--line);font-size:13px;font-weight:600;letter-spacing:.1em;color:var(--accent)}
+  #licClose{background:none;border:none;color:var(--dim);font-size:18px;line-height:1;padding:4px 8px;cursor:pointer}
+  .lic-b{overflow-y:auto;padding:6px 18px 16px;font-size:12.5px;line-height:1.75;color:#cfe0ee;-webkit-overflow-scrolling:touch}
+  .lic-b h3{margin:12px 0 2px;font-size:12px;letter-spacing:.14em;color:var(--accent2);font-weight:600}
+  .lic-b p{margin:4px 0}
+  .lic-b a{color:var(--accent)}
+  .lic-b .en{display:block;margin-top:3px;font-size:11px;line-height:1.55;color:var(--dim)}
+  .sig a,#credit a.licOpen{color:var(--accent);text-decoration:none}
+  .sig{margin-top:10px;text-align:center;font-size:10.5px;letter-spacing:.04em;color:var(--dim);opacity:.7;user-select:text}
+  .dl a.alt{background:none;border:none;padding:0;font-size:11px;color:var(--dim)}
+
+  #srcpanel{position:fixed;right:24px;top:16px;z-index:20;width:320px;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(14px);
+    box-shadow:0 18px 50px rgba(0,0,0,.5);overflow:hidden;
+    display:flex;flex-direction:column;max-height:calc(100% - 248px)}   /* 右上角；不与右下角标尺重叠 */
+  #srcpanel .ph{display:flex;align-items:center;justify-content:space-between;padding:12px 15px;
+    border-bottom:1px solid var(--line);cursor:pointer;font-weight:600;font-size:13px;
+    letter-spacing:.12em;color:var(--accent2)}
+  #srcpanel .body{padding:8px 15px 12px;overflow:auto;flex:1 1 auto;min-height:0}
+  #srcpanel.collapsed .body{display:none}
+  .src-item{padding:9px 0;border-bottom:1px dashed var(--line);font-size:11.5px}
+  .src-item:last-child{border-bottom:none}
+  .src-item .nm{display:flex;align-items:center;gap:10px;font-weight:600;font-size:12.5px}
+  .src-item .nm .tx{flex:1;min-width:0;line-height:1.45}
+  .src-item .nm small{display:block;font-weight:400;font-size:10.5px;color:var(--dim);margin-top:1px}
+  .src-item .st{margin-left:auto}   /* 徽标右对齐 */
+  .st{font-size:10.5px;padding:1px 8px;border-radius:10px;font-weight:500;flex-shrink:0}
+  .st.ok{background:rgba(95,223,143,.15);color:var(--ok)}
+  .st.loading{background:rgba(143,179,204,.12);color:var(--dim)}
+  .st.fail{background:rgba(255,107,107,.15);color:var(--err)}
+  .src-item .url{color:var(--dim);word-break:break-all;line-height:1.5;font-family:Consolas,monospace;font-size:10.5px}
+
+  #legend{position:fixed;right:24px;bottom:24px;z-index:20;width:206px;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(14px);
+    padding:13px 15px 15px;box-shadow:0 18px 50px rgba(0,0,0,.5)}
+  #legend .lt{font-weight:600;font-size:12.5px;letter-spacing:.08em;color:var(--accent);margin-bottom:10px;white-space:nowrap}
+  .bar{height:118px;border-radius:6px;position:relative;
+    background:linear-gradient(to bottom,
+      #ffffff 0%,#e6e6e6 6%,#c9b896 12%,#a8a06b 20%,#7d9a55 30%,#4f8a44 38%,
+      #3a7a40 46%,#2c6b3c 50%,
+      #2a8cb8 51%,#12699c 58%,#0b4a7c 72%,#073258 86%,#041f3f 94%,#020d20 100%)}
+  .tick{position:absolute;right:-4px;transform:translateY(-50%);font-weight:600;font-size:10.5px;
+    color:var(--dim);display:flex;align-items:center;gap:5px;white-space:nowrap}
+  .tick::before{content:'';width:8px;height:1px;background:var(--dim)}
+  .tick span{background:var(--deep);padding:0 3px}
+  .sealevel{position:absolute;left:-8px;right:-8px;top:50%;height:2px;background:var(--accent2);
+    box-shadow:0 0 8px var(--accent2)}
+  .sealevel i{position:absolute;left:0;top:-16px;font-style:normal;font-size:10px;color:var(--accent2);
+    letter-spacing:.1em;font-weight:500}
+
+  #info{position:fixed;left:calc(50% + 57px);bottom:106px;   /* 在控制台与标尺之间的空白区居中，位于操作说明上方 */
+    z-index:20;min-width:330px;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(14px);padding:13px 20px;
+    opacity:0;transform:translate(-50%,8px);transition:.3s;pointer-events:none;
+    box-shadow:0 18px 50px rgba(0,0,0,.5);display:flex;gap:22px;align-items:center}
+  #info.on{opacity:1;transform:translate(-50%,0)}
+  #info .country{font-weight:700;font-size:18px;color:var(--accent2);line-height:1.15}
+  #info .country small{display:block;font-size:10.5px;color:var(--dim);font-weight:400;letter-spacing:.1em;margin-top:1px}
+  .kv{font-size:11.5px;color:var(--dim)}
+  .kv b{display:block;font-size:16px;margin-top:1px}
+  .kv .up{color:#8fd47f}.kv .dn{color:#5fb0e8}
+  .kv small{display:block;font-size:10px;margin-top:2px;letter-spacing:.03em;opacity:.8}
+  #info .coord{font-weight:600;font-size:12px;color:var(--dim);letter-spacing:.04em}
+
+  #loader{position:fixed;inset:0;z-index:99;background:var(--deep);display:flex;flex-direction:column;
+    align-items:center;justify-content:center;transition:opacity .8s;gap:18px}
+  #loader.off{opacity:0;pointer-events:none}
+  .ring{width:70px;height:70px;border-radius:50%;position:relative}
+  .ring::before,.ring::after{content:'';position:absolute;inset:0;border-radius:50%;border:2px solid transparent}
+  .ring::before{border-top-color:var(--accent);animation:spin 1.2s linear infinite}
+  .ring::after{border-bottom-color:var(--accent2);animation:spin 1.8s linear infinite reverse}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #loadtxt{font-weight:500;letter-spacing:.16em;font-size:12.5px;color:var(--dim);text-align:center;line-height:2;max-width:480px}
+  #loadpct{font-weight:700;font-size:32px;color:var(--accent)}
+  .loadbar{width:240px;height:3px;background:rgba(80,160,210,.2);border-radius:3px;overflow:hidden}
+  .loadbar i{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s}
+
+  #help{position:fixed;left:calc(50% + 57px);bottom:26px;transform:translateX(-50%);z-index:19;font-size:11px;
+    color:var(--dim);letter-spacing:.05em;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:8px 18px;backdrop-filter:blur(10px);display:flex;flex-direction:column;
+    align-items:center;gap:3px;white-space:nowrap}
+  #help .helpt b{color:var(--accent);font-size:11.5px;letter-spacing:.18em}
+  #help .helprow b{color:var(--accent)}
+  #credit{position:fixed;left:50%;bottom:5px;transform:translateX(-50%);max-width:calc(100% - 48px);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:19;font-size:10.5px;color:rgba(143,179,204,.55);letter-spacing:.05em;line-height:1.7}
+  #bgStat{position:fixed;top:14px;right:370px;z-index:22;display:none;pointer-events:none;padding:4px 12px;border-radius:12px;background:rgba(6,18,30,.82);border:1px solid var(--line);font-size:11.5px;letter-spacing:.04em;color:var(--accent)}
+  #bgStat.on{display:block}
+  html.short #bgStat{top:6px;right:64px}
+  #wm{position:fixed;right:14px;bottom:5px;z-index:21;pointer-events:none;user-select:none;-webkit-user-select:none;font-size:11px;font-weight:700;letter-spacing:.14em;color:rgba(255,255,255,.4);text-shadow:0 0 3px rgba(0,0,0,.7),0 0 1px rgba(0,0,0,.9)}
+  html.short #wm{bottom:auto;top:8px;right:12px}
+  #credit a{color:rgba(55,213,255,.6);text-decoration:none}
+  @media(max-width:1180px){#srcpanel{width:280px}}
+  @media(max-width:980px){#srcpanel{display:none}}
+  @media(max-width:900px){#panel{width:236px}#legend{display:none}}
+
+  /* ── 移动端：控制面板默认收起为悬浮按钮，避免遮挡地球 ── */
+  #menuBtn{display:none;position:fixed;z-index:40;width:52px;height:52px;border-radius:50%;
+    box-shadow:0 8px 24px rgba(55,213,255,.35);align-items:center;justify-content:center;
+    font-size:22px;font-weight:700;color:#02121e;background:linear-gradient(120deg,#0e7fb8,#37d5ff)}
+  #menuBtn{left:16px;bottom:96px}
+  /* 控制台标题栏右上角的关闭按钮：仅手机抽屉/侧边栏模式显示 */
+  #menuClose{display:none;margin-left:auto;width:30px;height:30px;padding:0;border-radius:8px;flex-shrink:0;
+    align-items:center;justify-content:center;font-size:15px;font-weight:700;letter-spacing:0;
+    background:rgba(80,160,210,.15);border:1px solid var(--line);color:var(--accent)}
+  #menuClose:active{background:rgba(55,213,255,.3)}
+  @media(max-width:900px){
+    #menuBtn{display:flex}
+    #panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:74%;
+      transform:translateY(calc(100% + 16px));transition:transform .32s ease;border-radius:14px}
+    #panel.mobOpen{transform:translateY(0)}
+    #menuClose{display:flex}
+    #panel .ph{position:sticky;top:0;z-index:2;background:rgba(6,18,30,.97)}
+    header{padding:10px 12px}
+    .brand .sub{display:none}
+    #help{display:none}
+    #credit{display:none}
+    #info{display:flex;left:12px;right:12px;transform:none;width:auto;min-width:0;bottom:96px;
+      justify-content:space-between;gap:12px;padding:11px 16px}
+    #info.on{transform:none}
+    #info .coord{font-size:11px}
+  }
+
+  /* ── 方向微调区：触屏设备与窄屏显示（桌面用方向键），紧跟在跳转按钮下方 ── */
+  .dirsec{display:none;margin-top:10px}
+  @media(max-width:900px){ .dirsec{display:block} }
+  html.touch .dirsec{display:block}
+  .dirsec .lt{font-size:10px;color:var(--dim);letter-spacing:.14em;font-weight:500}
+  .dirpad{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
+  .dbtn{background:rgba(80,160,210,.12);border:1px solid var(--line);color:var(--ink);
+    font-size:15px;padding:8px 0;border-radius:8px}
+  .dbtn:active,.dbtn.hold{background:rgba(55,213,255,.25)}
+  .dbtn{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+
+  /* ── 手机竖握时整体旋转 90°，以横屏布局显示（不依赖浏览器的横屏锁定） ── */
+  #app{position:fixed;left:0;top:0;width:100%;height:100%;overflow:hidden;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+  #app input{-webkit-user-select:text;user-select:text}   /* 输入框仍可选中、编辑 */
+  html.rot #app{transform-origin:0 0;width:100vh;height:100vw;transform:translateX(100vw) rotate(90deg)}   /* 初始值，主程序再按实际视口像素精确设置 */
+  #rotateHint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:90;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 18px;
+    font-size:14px;color:var(--accent);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .4s}
+  #rotateHint.show{opacity:1}
+  .touch-only{display:none}
+  html.touch .touch-only{display:flex}
+
+  /* ── 手机横屏（含竖握旋转）：屏幕矮，控制台改为左侧滑出、信息条放右下 ── */
+  html.short header{padding:8px 12px}
+  html.short .brand h1{font-size:17px}
+  html.short .brand .en{display:none}
+  html.short #srcpanel, html.short #legend, html.short #help, html.short #credit{display:none}
+  html.short #panel{left:8px;right:auto;top:8px;bottom:8px;width:290px;max-height:none;overflow-y:auto;
+    transform:translateX(calc(-100% - 16px));transition:transform .32s ease;border-radius:14px}
+  html.short #panel.mobOpen{transform:none}
+  html.short .pbody{padding:10px 12px 12px}
+  html.short #menuBtn{display:flex;left:14px;bottom:14px;width:46px;height:46px;font-size:20px}
+  #panel.mobOpen ~ #menuBtn{display:none !important}   /* 面板展开时只留关闭按钮 */
+  html.short #menuClose{display:flex}
+  /* 手机抽屉/侧边栏：标题栏固定在顶部，滚动时关闭按钮始终可见 */
+  html.short #panel .ph{position:sticky;top:0;z-index:2;background:rgba(6,18,30,.97)}
+  html.short #info{left:72px;right:12px;bottom:12px;top:auto;transform:none;width:auto;min-width:0;max-width:none;
+    gap:12px;padding:9px 14px;justify-content:space-between}   /* 从 ☰ 右侧铺到屏幕右边 */
+  html.short #panel.mobOpen ~ #info{left:310px}
+  html.rot #info{right:64px}   /* 竖握旋转时画面右侧 = 屏幕底部，避开浏览器/平台的底部提示条 */
+  /* 手机信息条：各段不换行，过长的说明用省略号；控制台展开时空间小，隐藏坐标（输入框里已有） */
+  html.short #info .country{white-space:nowrap;flex-shrink:0}
+  html.short #info .kv{flex:1 1 auto;min-width:0}
+  html.short #info .kv b, html.short #info .kv small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  html.short #info .coord{white-space:nowrap;flex-shrink:0}
+  html.short #panel.mobOpen ~ #info .coord{display:none}                 /* 面板展开时从面板右边开始 */
+  html.short #info.on{transform:none}
+  html.short #info .country{font-size:15px}
+  html.short #info .coord{font-size:11px}   /* 信息条加宽后有位置显示坐标 */
+</style>
+</head>
+<body>
+<script>
+/* 最早注册的错误捕获：后续任何脚本（含内嵌数据、三维引擎）出错，都把原因显示在加载界面上 */
+addEventListener('error', function(e){
+  var t=document.getElementById('loadtxt'), el=e.target, src=el && (el.src||el.href);
+  if(!t || /^错误/.test(t.textContent)) return;   // 保留第一个错误（通常是根因）
+  t.textContent = src && el!==window
+    ? '错误：文件加载失败 '+src.split('/').slice(-2).join('/')+'（请刷新；仍失败请截图反馈）'
+    : '错误：'+(e.message||'脚本错误')+'（请截图反馈）';
+}, true);   // 捕获阶段：脚本/图片等资源加载失败也能捕获
+/* 页面加载结束但主程序没启动：多半是文件没下载完整（被中断或托管平台截断） */
+addEventListener('load', function(){ setTimeout(function(){
+  if(window.__appStarted) return;
+  var t=document.getElementById('loadtxt'), mb=(document.documentElement.outerHTML.length/1e6).toFixed(1);
+  if(t && !/^错误/.test(t.textContent)) t.textContent='错误：程序未能启动，网页文件可能不完整（当前约 '+mb+' MB），请刷新后重试';
+}, 800); });
+</script>
+
+<div id="app">
+<canvas id="stars"></canvas>
+<div id="stage"></div>
+
+<header>
+  <div class="brand">
+    <h1>全球<em>海拔</em>与<em>海深</em>离线查询系统</h1>
+    <!--WEB-ONLY-->
+    <a class="lang" href="en.html" hreflang="en">English</a>
+    <!--/WEB-ONLY-->
+    <div class="en">Global Elevation &amp; Bathymetry Offline Query System</div>
+  </div>
+</header>
+
+<div id="panel">
+  <div class="ph"><span class="dot"></span>定位控制台 · NAVIGATE<button id="menuClose" title="收起控制台">✕</button></div>
+  <div class="pbody">
+    <div class="srch">
+      <input id="srch" type="text" placeholder="🔍 搜索国家或地区、地标" autocomplete="off" spellcheck="false" aria-label="搜索国家或地区、地标">
+      <div class="srch-list" id="srchList" role="listbox"></div>
+    </div>
+    <div class="row">
+      <div class="fld"><label>纬度 LAT<small>单位：度 ° · 北正南负</small></label><input id="lat" type="text" value="30.57" placeholder="-90 ~ 90" autocomplete="off" spellcheck="false"></div>
+      <div class="fld"><label>经度 LON<small>单位：度 ° · 东正西负</small></label><input id="lon" type="text" value="104.07" placeholder="-180 ~ 180" autocomplete="off" spellcheck="false"></div>
+    </div>
+    <div class="hint" id="coordMsg">也支持度分秒，如 30°34′12″N</div>
+    <div class="btns">
+      <button class="go" id="goBtn">⌖ 跳转到该坐标</button>
+      <button class="ghost" id="homeBtn">复位视角</button>
+      <button class="ghost" id="spinBtn">停止旋转</button>
+    </div>
+    <div class="dirsec">
+      <div class="lt">坐标微调 · NUDGE（每次 0.01°）</div>
+      <div class="dirpad">
+        <button class="dbtn" data-d="left" title="向西">◀</button>
+        <button class="dbtn" data-d="up" title="向北">▲</button>
+        <button class="dbtn" data-d="down" title="向南">▼</button>
+        <button class="dbtn" data-d="right" title="向东">▶</button>
+      </div>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="layers">
+      <div class="lt">图层叠加 · LAYERS</div>
+      <label class="tg">国界线<input type="checkbox" id="lyBorders" checked><span class="sw"></span></label>
+      <label class="tg">国家或地区标注<input type="checkbox" id="lyLabels" checked><span class="sw"></span></label>
+      <label class="tg">陆地地形分层设色<input type="checkbox" id="lyHypso" checked><span class="sw"></span></label>
+      <label class="tg">海洋深度渐变蓝色<input type="checkbox" id="lyBathy" checked><span class="sw"></span></label>
+      <label class="tg">大气辉光<input type="checkbox" id="lyAtmo" checked><span class="sw"></span></label>
+      <label class="tg touch-only">手机竖握时横屏显示<input type="checkbox" id="lyRotate" checked><span class="sw"></span></label>
+      <div class="sld">地形立体夸张度 <span id="dispVal">1.2×</span>
+        <input type="range" id="dispSlider" min="0" max="3" step="0.1" value="1.2"></div>
+    </div>
+    <!--WEB-ONLY-->
+    <div class="dl">
+      <a href="earth-offline-zh.html" download="全球海拔与海深离线查询系统.html">⬇ 下载单文件离线版（约 10.6 MB）</a>
+      <a class="alt" href="https://github.com/wzh9436/earth-elevation/blob/main/earth-offline-zh.html" target="_blank" rel="noopener">备用：从 GitHub 下载</a>
+    </div>
+    <!--/WEB-ONLY-->
+    <div class="sig">© 2026 wzh · CC BY-NC 4.0 · <a href="#" class="licOpen">数据与许可</a><br>商用请联系作者 · github.com/wzh9436/earth-elevation</div>
+  </div>
+</div>
+
+<div id="srcpanel">
+  <div class="ph" id="srcToggle"><span>📦 离线数据 · OFFLINE DATA</span><span id="srcArrow">▾</span></div>
+  <div class="body" id="srcBody"></div>
+</div>
+
+<div id="info">
+  <div class="country" id="iCountry">—<small id="iHint">移动鼠标探测地表</small></div>
+  <div class="kv">海拔 / 海深<b id="iElev" class="up">—</b><small id="iSrc"></small></div>
+  <div class="coord" id="iCoord">LAT — · LON —</div>
+</div>
+
+<div id="legend">
+  <div class="lt">海拔海深标尺 · LEGEND</div>
+  <div class="bar">
+    <div class="sealevel"><i>海平面 0 m</i></div>
+    <div class="tick" style="top:4%"><span>+8848 珠峰</span></div>
+    <div class="tick" style="top:18%"><span>+3000</span></div>
+    <div class="tick" style="top:34%"><span>+1000</span></div>
+    <div class="tick" style="top:45%"><span>+200</span></div>
+    <div class="tick" style="top:58%"><span>-1000</span></div>
+    <div class="tick" style="top:72%"><span>-4000</span></div>
+    <div class="tick" style="top:86%"><span>-8000</span></div>
+    <div class="tick" style="top:97%"><span>-11000</span></div>
+  </div>
+</div>
+
+<div id="help">
+  <div class="helpt"><b>操作说明 · HELP</b></div>
+  <div class="helprow">🖱 拖拽旋转 · 滚轮缩放 · 悬停探测海拔/海深与国家或地区</div>
+  <div class="helprow">📍 双击选点 · <b>方向键</b>微调选点 0.01° · <b>Esc</b> 清除选点</div>
+</div>
+<!--LIC-->
+<div id="licBox" role="dialog" aria-modal="true" aria-label="数据与许可">
+  <div class="lic-card">
+    <div class="lic-h"><span>数据与许可 · DATA &amp; LICENSE</span><button id="licClose" aria-label="关闭">✕</button></div>
+    <div class="lic-b" id="licBody">
+      <h3>本项目</h3>
+      <p>界面、程序与整合方式 © 2026 wzh，采用 <a href="https://creativecommons.org/licenses/by-nc/4.0/deed.zh-hans" target="_blank" rel="noopener">CC BY-NC 4.0</a>（署名-非商业性使用）许可：可免费使用、分享、改编，须署名并注明改动，不得用于商业目的。<b>商用请联系作者</b>（GitHub：<a href="https://github.com/wzh9436" target="_blank" rel="noopener">@wzh9436</a>）。</p>
+      <p>以下第三方数据与程序库保持各自的原许可；非商业限制只适用于本项目的原创部分。</p>
+      <h3>第三方数据</h3>
+      <p><b>显示用的地形与海深</b>：AWS Terrain Tiles（Terrarium 格式，第 5 级瓦片）——陆地来自 GMTED2010，海洋来自 ETOPO1；南北纬 84° 以外的极区边缘沿用本项目原有素材。<br>
+      <span class="en">GMTED2010 data courtesy of the U.S. Geological Survey. ETOPO1: DOC/NOAA/NESDIS/NCEI. Terrain Tiles: Tilezen / Mapzen, hosted on AWS Open Data.</span></p>
+      <p><b>极值网格</b>（所在网格最高 / 最深）：同为 Terrain Tiles（第 8 级瓦片）——陆地来自 SRTM，北纬 60° 以北来自 GMTED2010，加拿大来自 NRCan CDEM，海洋来自 ETOPO1。<br>
+      <span class="en">SRTM data courtesy of the U.S. Geological Survey. Canada: contains information licensed under the Open Government Licence – Canada. Attribution list: <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener">tilezen/joerd</a>.</span></p>
+      <p><b>海陆掩膜</b>：基于 GEBCO 的海陆分界数据（本项目原有素材）。<br>
+      <span class="en">GEBCO Grid: GEBCO Compilation Group. Not for navigation.</span></p>
+      <p><b>国界</b>：<a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener">Natural Earth</a>（公共领域），经 world-atlas 整理、topojson-simplify 简化。</p>
+      <p><b>经典位置参考值</b>：来自公开资料，如珠穆朗玛峰 8848.86 m（2020 年中尼联合测量）。</p>
+      <p><b>三维引擎</b>：three.js（MIT 许可，© 2010-2023 three.js authors），版权声明保留在文件内。</p>
+      <h3>使用须知</h3>
+      <p>海拔与海深是约 10 km 格网的估算值，“所在网格最高 / 最深”为约 20 km 网格内的统计，仅供参考，不得用于航行、海上安全、工程或测绘。</p>
+      <p>国家或地区名称与边界来自 Natural Earth，仅作地理位置参考，不代表任何立场。</p>
+      <p>本页面完全离线运行，不向任何服务器发送数据。</p>
+    </div>
+  </div>
+</div>
+<!--/LIC-->
+<div id="bgStat" aria-live="polite"></div>
+<div id="wm" aria-hidden="true">© wzh</div>
+<div id="credit">
+  <div class="c-line">数据来源：AWS Terrain Tiles · GEBCO · Natural Earth · 完全离线 · © wzh · <a href="#" class="licOpen">数据与许可</a></div>
+</div>
+
+<button id="menuBtn" title="打开控制台">☰</button>
+
+<div id="rotateHint">📱 请横握手机，体验与电脑端一致</div>
+
+<div id="loader">
+  <div class="ring"></div>
+  <div id="loadpct">0%</div>
+  <div class="loadbar"><i id="loadfill"></i></div>
+  <div id="loadtxt">正在加载程序与离线数据（约 8 MB），网速较慢时需要稍等…</div>
+</div>
+</div><!-- /#app -->
+
+<script src="lib/three.min.js"></script>
+<script src="lib/OrbitControls.js"></script>
+<script>
+/* 数据文件位置（构建单文件离线版时会被替换为内嵌数据，见 tools/build_offline.py） */
+const ASSETS = {
+  land: 'data/land.jpg',          // 陆地海拔 sqrt(h/8850)
+  sea: 'data/sea.jpg',            // 海洋深度 sqrt(-h/11000)
+  mask: 'data/mask.png',          // 海陆掩膜
+  ext: 'data/ext.webp',           // 极值网格（16 位）
+  countries: 'data/countries.json' // Natural Earth 10m 国界
+};
+</script>
+<script>
+/* ══════════════════════════════════════════════════════════
+   全球海拔与海深离线查询系统 · 离线单文件版
+   修复：海平面以 0 为准（NASA GEBCO 灰度 0=海平面），
+   海深用独立 bathymetry 图，只对中国/海洋正确上色，
+   背面国家/标注不再穿透（depthTest 开启）。
+   ══════════════════════════════════════════════════════════ */
+const R = 100, DEG = Math.PI/180;
+
+/* ── 手机竖握横屏：#app 顺时针旋转 90°，屏幕坐标需换算成画面坐标 ── */
+const IS_TOUCH = matchMedia('(pointer:coarse)').matches;
+if(IS_TOUCH){ document.documentElement.classList.add('touch'); document.getElementById('iHint').textContent='单击查看海拔，双击选点'; }
+const ROT = { on:false, pref:true };
+try{ ROT.pref = localStorage.getItem('rotLandscape')!=='0'; }catch(e){}
+const appW = () => ROT.on ? innerHeight : innerWidth;   // 画面（旋转后）宽高
+const appH = () => ROT.on ? innerWidth : innerHeight;
+function toApp(x,y){ return ROT.on ? { x:y, y:innerWidth-x } : { x, y }; }
+
+/* ── 内嵌数据状态面板 ── */
+const SOURCES = [   // st：loading / ok / fail，按真实加载结果更新
+  { key:'land', label:'地形海拔 0 ~ 8850 m', sub:'GMTED2010 · ETOPO1', st:'loading' },
+  { key:'sea', label:'海洋深度 0 ~ -11000 m', sub:'ETOPO1', st:'loading' },
+  { key:'mask', label:'高精度海陆掩膜', sub:'GEBCO', st:'loading' },
+  { key:'countries', label:'Natural Earth 国家或地区边界', sub:'10m 精细版', st:'loading' },
+  { key:'ext', label:'极值网格：所在网格最高 / 最深', sub:'约 20 km 一格，源数据约 600 m', st:'loading' },
+  { key:'places', label:'经典位置参考值', sub:'34 处高峰、海沟、洼地', st:'ok' },
+  { key:'engine', label:'three.js 三维引擎', sub:'本地加载，无需联网', st:'ok' },
+];
+const ST_TXT = { loading:'… 加载中', ok:'✓ 已加载', fail:'✗ 失败' };
+function renderSrcPanel(){
+  document.getElementById('srcBody').innerHTML = SOURCES.map(s =>
+    `<div class="src-item"><div class="nm"><span class="tx">${s.label}${s.sub?`<small>${s.sub}</small>`:''}</span>`+
+    `<span class="st ${s.st}">${ST_TXT[s.st]}</span></div></div>`
+  ).join('');
+}
+function setSrc(key, st){ const s=SOURCES.find(x=>x.key===key); if(s && s.st!==st){ s.st=st; renderSrcPanel(); } }
+renderSrcPanel();
+document.getElementById('srcToggle').onclick = () => {
+  const p = document.getElementById('srcpanel');
+  p.classList.toggle('collapsed');
+  document.getElementById('srcArrow').textContent = p.classList.contains('collapsed') ? '▸' : '▾';
+};
+
+/* ── 装载数据图片（网页版为文件路径，离线版为内嵌 data: URI） ── */
+function loadImageBasic(src){
+  return new Promise((res,rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => rej(new Error('数据文件加载失败：'+(src.startsWith('data:')?'内嵌数据':src)));
+    img.src = src;
+  });
+}
+/* 边下载边报告字节数（用于加载进度）；内嵌数据或不支持流式读取时退回普通加载 */
+async function loadImage(src, onBytes){
+  if(!onBytes || src.startsWith('data:') || !window.ReadableStream) return loadImageBasic(src);
+  let url=null;
+  try{
+    const r = await fetch(src);
+    if(!r.ok || !r.body) throw new Error('HTTP '+r.status);
+    const total = +r.headers.get('content-length') || 0, rd = r.body.getReader(), parts=[]; let got=0;
+    onBytes(0, total);
+    for(;;){ const {done,value} = await rd.read(); if(done) break; parts.push(value); got+=value.length; onBytes(got, total); }
+    url = URL.createObjectURL(new Blob(parts, {type: r.headers.get('content-type')||''}));
+    return await loadImageBasic(url);
+  }catch(e){ return loadImageBasic(src); }
+  finally{ if(url) URL.revokeObjectURL(url); }
+}
+async function loadCountries(src){
+  if(typeof src!=='string') return src;               // 离线版：已内嵌
+  const r = await fetch(src);
+  if(!r.ok) throw new Error('数据文件加载失败：'+src+'（HTTP '+r.status+'）');
+  try{ return await r.json(); }
+  catch(e){ throw new Error('数据文件不完整：'+src+'（下载被中断，请刷新）'); }
+}
+
+/* ── Three.js 场景（全局 THREE，来自内嵌 UMD） ── */
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, appW()/appH(), .1, 5000);
+camera.position.set(0, 60, 300);
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(appW(), appH());
+document.getElementById('stage').appendChild(renderer.domElement);
+
+/* 贴图尺寸上限：超大贴图解码后每张约 230MB 显存，手机/弱显卡会崩溃白屏，按设备缩小 */
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const TEX_MAX = Math.min(renderer.capabilities.maxTextureSize, IS_MOBILE ? 4096 : 8192);
+const SEG_W = IS_MOBILE ? 384 : 512, SEG_H = SEG_W/2;   // 地球网格精度（约 0.7°）
+const LIFT = 2.0*8850/6400;   // 地形抬升系数：归一化高度(÷8850m) → 球面单位，与旧版视觉一致
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = .06;
+controls.minDistance = 116; controls.maxDistance = 900;
+controls.autoRotate = true; controls.autoRotateSpeed = .45;
+controls.enablePan = false;
+controls.mapPointer = e => {
+  if(!ROT.on) return e;
+  const q=toApp(e.clientX,e.clientY);
+  return { pointerId:e.pointerId, pointerType:e.pointerType, button:e.button,
+    ctrlKey:e.ctrlKey, metaKey:e.metaKey, shiftKey:e.shiftKey,
+    clientX:q.x, clientY:q.y, pageX:q.x, pageY:q.y, preventDefault:()=>e.preventDefault() };
+};
+
+/* 星空 */
+(function(){
+  const c = document.getElementById('stars'), x = c.getContext('2d');
+  let st = [];
+  function resize(){ c.width=appW(); c.height=appH();
+    st = Array.from({length:260},()=>({x:Math.random()*c.width,y:Math.random()*c.height,
+      r:Math.random()*1.3+.2,p:Math.random()*Math.PI*2,s:.4+Math.random()*1.4})); }
+  resize(); addEventListener('appresize', resize);
+  let last=-1e9;   // 闪烁约 15 帧/秒即可，省 CPU
+  (function draw(t){ requestAnimationFrame(draw);
+    if(t-last<66) return; last=t;
+    x.clearRect(0,0,c.width,c.height);
+    for(const p of st){ x.globalAlpha=.35+.65*Math.abs(Math.sin(t*.001*p.s+p.p));
+      x.fillStyle='#cfe6ff'; x.beginPath(); x.arc(p.x,p.y,p.r,0,7); x.fill(); }
+    x.globalAlpha=1; })(0);
+})();
+
+function ll2v(lat, lon, r){
+  const phi = (90-lat)*DEG, th = (lon+180)*DEG;
+  return new THREE.Vector3(-r*Math.sin(phi)*Math.cos(th), r*Math.cos(phi), r*Math.sin(phi)*Math.sin(th));
+}
+
+/* ── 地球着色器：NASA GEBCO 海拔 + 海深 + 高精度海陆掩膜 ── */
+const uniforms = {
+  uElev:{ value:null }, uBath:{ value:null }, uMask:{ value:null },
+  uDisp:{ value:1.2 }, uHypso:{ value:1 }, uBathy:{ value:1 },
+  uLight:{ value:new THREE.Vector3(1,.55,.8).normalize() }
+};
+const earthMat = new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader:`
+    uniform sampler2D uElev, uMask; uniform float uDisp;
+    varying vec2 vUv; varying vec3 vN; varying vec3 vWp;
+    float hl(vec2 p){ float s=texture2D(uElev,p).r; return s*s; }   // 贴图存 sqrt(h/8850m)
+    void main(){
+      vUv = uv;
+      float e = hl(uv);                      // 0=海平面, 1=8850m
+      float m = texture2D(uMask, uv).r;      // 掩膜: 1=陆地, 0=海洋
+      float land = smoothstep(.5,.6,m);      // 以掩膜精确判定海陆
+      float lift = land*e*${LIFT.toFixed(4)}*uDisp;   // 陆地向外抬升
+      vec3 n = normalize(position);
+      vec3 dp = position + n*lift;
+      float eps = .0011;
+      float hL=hl(uv-vec2(eps,0.)), hR=hl(uv+vec2(eps,0.));
+      float hD=hl(uv-vec2(0.,eps)), hU=hl(uv+vec2(0.,eps));
+      vec3 tng = normalize(cross(vec3(0.,1.,0.), n) + vec3(1e-5,0.,0.));
+      vec3 btg = normalize(cross(n, tng));
+      float k = uDisp*8.3;
+      vec3 pn = normalize(n - tng*(hR-hL)*k - btg*(hU-hD)*k);
+      pn = mix(n, pn, land);
+      vN = normalize(mat3(modelMatrix)*pn);
+      vWp = (modelMatrix*vec4(dp,1.)).xyz;
+      gl_Position = projectionMatrix*viewMatrix*vec4(vWp,1.);
+    }`,
+  fragmentShader:`
+    uniform sampler2D uElev,uBath,uMask;
+    uniform float uHypso,uBathy; uniform vec3 uLight;
+    varying vec2 vUv; varying vec3 vN; varying vec3 vWp;
+    vec3 landCol(float m){
+      if(m<200.) return mix(vec3(.30,.52,.32), vec3(.42,.60,.34), m/200.);
+      if(m<500.) return mix(vec3(.42,.60,.34), vec3(.58,.62,.38), (m-200.)/300.);
+      if(m<1500.) return mix(vec3(.58,.62,.38), vec3(.68,.58,.38), (m-500.)/1000.);
+      if(m<3000.) return mix(vec3(.68,.58,.38), vec3(.78,.66,.48), (m-1500.)/1500.);
+      if(m<5200.) return mix(vec3(.78,.66,.48), vec3(.86,.80,.70), (m-3000.)/2200.);
+      return mix(vec3(.86,.80,.70), vec3(.97,.97,.97), min((m-5200.)/2000.,1.));   // 雪线以上渐白
+    }
+    vec3 oceanCol(float m){
+      if(m<200.) return mix(vec3(.22,.62,.72), vec3(.16,.48,.66), m/200.);
+      if(m<1500.) return mix(vec3(.16,.48,.66), vec3(.10,.34,.52), (m-200.)/1300.);
+      if(m<4000.) return mix(vec3(.10,.34,.52), vec3(.06,.21,.38), (m-1500.)/2500.);
+      return mix(vec3(.06,.21,.38), vec3(.02,.09,.20), min((m-4000.)/4000.,1.));
+    }
+    void main(){
+      float e = texture2D(uElev,vUv).r; e*=e;    // 0..1 → 0..8850m
+      float b = texture2D(uBath,vUv).r; b*=b;    // 0..1 → 0..11000m 深
+      float m = texture2D(uMask,vUv).r;          // 掩膜: 1=陆地, 0=海洋
+      float land = smoothstep(.5,.6,m);          // 精确判定海陆
+      float el = e*8850.;
+      float dep = b*11000.;
+      vec3 landBase = uHypso>.5 ? landCol(el) : vec3(.35+.5*sqrt(e));
+      vec3 oceanBase = uBathy>.5 ? oceanCol(dep) : vec3(.18,.45,.62);
+      vec3 col = mix(oceanBase, landBase, land);
+      vec3 L = normalize(uLight), V = normalize(cameraPosition - vWp);
+      /* 球体整体明暗保持柔和（球心不过曝、边缘不发黑），地形起伏的明暗单独加强 */
+      vec3 n0 = normalize(vWp);                          // 不含地形的球面法线
+      float globe = .62 + .40*max(dot(n0,L),0.);
+      float relief = clamp((dot(vN,L) - dot(n0,L))*.6, -.28, .28);       // 地形坡面相对球面的明暗差
+      float diff = max(.15, globe + relief);
+      float spec = pow(max(dot(reflect(-L,vN),V),0.),40.)*(1.-land)*.12;   // 海面高光减弱、收窄
+      float coast = smoothstep(.5,.6,m)*(1.-smoothstep(.6,.7,m));
+      col = col*diff + vec3(.5,.8,.95)*spec + vec3(.2,.6,.7)*coast*.28;
+      gl_FragColor = vec4(col,1.);
+    }`
+});
+const geo = new THREE.SphereGeometry(R, SEG_W, SEG_H);
+const earth = new THREE.Mesh(geo, earthMat);
+scene.add(earth);
+
+/* 大气辉光 */
+const atmo = new THREE.Mesh(new THREE.SphereGeometry(R*1.18,64,64),
+  new THREE.ShaderMaterial({transparent:true, side:THREE.BackSide, depthWrite:false,
+    blending:THREE.AdditiveBlending,
+    vertexShader:`varying vec3 vN;void main(){vN=normalize(normalMatrix*normal);
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`varying vec3 vN;void main(){
+      float i=pow(max(0.68-dot(vN,vec3(0.,0.,1.)),0.),2.4);
+      gl_FragColor=vec4(.32,.62,.95,1.)*i*1.6;}`}));
+scene.add(atmo);
+
+/* 经纬网 */
+(function(){
+  const g = new THREE.Group(),
+    mat = new THREE.LineBasicMaterial({color:0x2a6a95,transparent:true,opacity:.16});
+  for(let lat=-80;lat<=80;lat+=20){const pts=[];
+    for(let lon=0;lon<=360;lon+=3)pts.push(ll2v(lat,lon-180,R*1.004));
+    g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat));}
+  for(let lon=-180;lon<180;lon+=30){const pts=[];
+    for(let lat=-90;lat<=90;lat+=3)pts.push(ll2v(lat,lon,R*1.004));
+    g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat));}
+  scene.add(g);
+})();
+
+/* ══════════════════════════════════════════════════════════
+   解码器（TopoJSON → GeoJSON）
+   ══════════════════════════════════════════════════════════ */
+function topoToFeatures(topology, objectName){
+  const arcs = topology.arcs, tf = topology.transform;
+  function decodeArc(idx){
+    const arc = arcs[idx<0?~idx:idx];
+    let x=0,y=0;
+    const pts = arc.map(d=>{ x+=d[0]; y+=d[1];
+      return tf ? [x*tf.scale[0]+tf.translate[0], y*tf.scale[1]+tf.translate[1]] : [x,y]; });
+    if(idx<0) pts.reverse();
+    return pts;
+  }
+  function decodeRing(ring){
+    let pts=[];
+    ring.forEach(ai=>{ const p=decodeArc(ai); if(pts.length)p.shift(); pts=pts.concat(p); });
+    return pts;
+  }
+  function decodeGeom(g){
+    if(g.type==='Polygon') return {type:'Polygon',coordinates:g.arcs.map(decodeRing)};
+    if(g.type==='MultiPolygon') return {type:'MultiPolygon',coordinates:g.arcs.map(pl=>pl.map(decodeRing))};
+    return g;
+  }
+  const obj = topology.objects[objectName];
+  return (obj.type==='GeometryCollection' ? obj.geometries : [obj]).map(g =>
+    ({type:'Feature', properties:g.properties||{}, id:g.id, geometry:decodeGeom(g)}));
+}
+
+/* 国名中英对照 */
+const ZH = {"United States of America":"美国","Russia":"俄罗斯","Canada":"加拿大","China":"中国","Brazil":"巴西","Australia":"澳大利亚","India":"印度","Argentina":"阿根廷","Kazakhstan":"哈萨克斯坦","Algeria":"阿尔及利亚","Dem. Rep. Congo":"刚果（金）","Saudi Arabia":"沙特阿拉伯","Mexico":"墨西哥","Indonesia":"印度尼西亚","Sudan":"苏丹","Libya":"利比亚","Iran":"伊朗","Mongolia":"蒙古","Peru":"秘鲁","Chad":"乍得","Niger":"尼日尔","Angola":"安哥拉","Mali":"马里","South Africa":"南非","Colombia":"哥伦比亚","Ethiopia":"埃塞俄比亚","Bolivia":"玻利维亚","Mauritania":"毛里塔尼亚","Egypt":"埃及","Tanzania":"坦桑尼亚","Nigeria":"尼日利亚","Venezuela":"委内瑞拉","Namibia":"纳米比亚","Mozambique":"莫桑比克","Pakistan":"巴基斯坦","Turkey":"土耳其","Chile":"智利","Zambia":"赞比亚","Myanmar":"缅甸","Afghanistan":"阿富汗","Somalia":"索马里","Central African Rep.":"中非","Ukraine":"乌克兰","Madagascar":"马达加斯加","Botswana":"博茨瓦纳","Kenya":"肯尼亚","France":"法国","Yemen":"也门","Thailand":"泰国","Spain":"西班牙","Turkmenistan":"土库曼斯坦","Cameroon":"喀麦隆","Papua New Guinea":"巴布亚新几内亚","Sweden":"瑞典","Uzbekistan":"乌兹别克斯坦","Morocco":"摩洛哥","Iraq":"伊拉克","Paraguay":"巴拉圭","Zimbabwe":"津巴布韦","Japan":"日本","Germany":"德国","Congo":"刚果（布）","Finland":"芬兰","Vietnam":"越南","Malaysia":"马来西亚","Norway":"挪威","Côte d'Ivoire":"科特迪瓦","Poland":"波兰","Italy":"意大利","Philippines":"菲律宾","Ecuador":"厄瓜多尔","Burkina Faso":"布基纳法索","New Zealand":"新西兰","Gabon":"加蓬","Guinea":"几内亚","United Kingdom":"英国","Ghana":"加纳","Romania":"罗马尼亚","Laos":"老挝","Uganda":"乌干达","Guyana":"圭亚那","Oman":"阿曼","Belarus":"白俄罗斯","Kyrgyzstan":"吉尔吉斯斯坦","Nepal":"尼泊尔","Tajikistan":"塔吉克斯坦","Bangladesh":"孟加拉国","Greece":"希腊","Nicaragua":"尼加拉瓜","Eritrea":"厄立特里亚","North Korea":"朝鲜","South Korea":"韩国","Cambodia":"柬埔寨","Syria":"叙利亚","Senegal":"塞内加尔","Jordan":"约旦","Azerbaijan":"阿塞拜疆","Austria":"奥地利","United Arab Emirates":"阿联酋","Czechia":"捷克","Serbia":"塞尔维亚","Portugal":"葡萄牙","Hungary":"匈牙利","Sierra Leone":"塞拉利昂","Panama":"巴拿马","Ireland":"爱尔兰","Georgia":"格鲁吉亚","Sri Lanka":"斯里兰卡","Lithuania":"立陶宛","Latvia":"拉脱维亚","Togo":"多哥","Croatia":"克罗地亚","Bosnia and Herz.":"波黑","Costa Rica":"哥斯达黎加","Slovakia":"斯洛伐克","Dominican Rep.":"多米尼加","Estonia":"爱沙尼亚","Denmark":"丹麦","Netherlands":"荷兰","Switzerland":"瑞士","Guatemala":"危地马拉","Cuba":"古巴","Bulgaria":"保加利亚","Iceland":"冰岛","Tunisia":"突尼斯","Fiji":"斐济","Kuwait":"科威特","Swaziland":"斯威士兰","Timor-Leste":"东帝汶","Bhutan":"不丹","Djibouti":"吉布提","Rwanda":"卢旺达","Haiti":"海地","Albania":"阿尔巴尼亚","Moldova":"摩尔多瓦","Armenia":"亚美尼亚","Qatar":"卡塔尔","Macedonia":"北马其顿","Slovenia":"斯洛文尼亚","El Salvador":"萨尔瓦多","Eq. Guinea":"赤道几内亚","Burundi":"布隆迪","Israel":"以色列","Lebanon":"黎巴嫩","Honduras":"洪都拉斯","Liberia":"利比里亚","Cyprus":"塞浦路斯","Jamaica":"牙买加","Kosovo":"科索沃","Gambia":"冈比亚","W. Sahara":"西撒哈拉","Solomon Is.":"所罗门群岛","Vanuatu":"瓦努阿图","Samoa":"萨摩亚","Tonga":"汤加","Greenland":"格陵兰","Antarctica":"南极洲","Fr. S. Antarctic Lands":"法属南部领地","Brunei":"文莱","Belize":"伯利兹","Bahamas":"巴哈马","Trinidad and Tobago":"特立尼达和多巴哥","Singapore":"新加坡","American Samoa":"美属萨摩亚","Andorra":"安道尔","Anguilla":"安圭拉","Antigua and Barb.":"安提瓜和巴布达","Aruba":"阿鲁巴","Ashmore and Cartier Is.":"阿什莫尔和卡捷群岛","Bahrain":"巴林","Barbados":"巴巴多斯","Belgium":"比利时","Benin":"贝宁","Bermuda":"百慕大","Br. Indian Ocean Ter.":"英属印度洋领地","British Virgin Is.":"英属维尔京群岛","Cabo Verde":"佛得角","Cayman Is.":"开曼群岛","Comoros":"科摩罗","Cook Is.":"库克群岛","Curaçao":"库拉索","Dominica":"多米尼克","Faeroe Is.":"法罗群岛","Falkland Is.":"福克兰群岛","Fr. Polynesia":"法属波利尼西亚","Grenada":"格林纳达","Guam":"关岛","Guernsey":"根西岛","Guinea-Bissau":"几内亚比绍","Heard I. and McDonald Is.":"赫德岛和麦克唐纳群岛","Hong Kong":"香港","Indian Ocean Ter.":"澳属印度洋领地","Isle of Man":"马恩岛","Jersey":"泽西岛","Kiribati":"基里巴斯","Lesotho":"莱索托","Liechtenstein":"列支敦士登","Luxembourg":"卢森堡","Macao":"澳门","Malawi":"马拉维","Maldives":"马尔代夫","Malta":"马耳他","Marshall Is.":"马绍尔群岛","Mauritius":"毛里求斯","Micronesia":"密克罗尼西亚","Monaco":"摩纳哥","Montenegro":"黑山","Montserrat":"蒙特塞拉特","N. Cyprus":"北塞浦路斯","N.Cyprus":"北塞浦路斯","N. Mariana Is.":"北马里亚纳群岛","Nauru":"瑙鲁","New Caledonia":"新喀里多尼亚","Niue":"纽埃","Norfolk Island":"诺福克岛","Palau":"帕劳","Palestine":"巴勒斯坦","Pitcairn Is.":"皮特凯恩群岛","Puerto Rico":"波多黎各","S. Geo. and the Is.":"南乔治亚岛","S. Sudan":"南苏丹","Saint Helena":"圣赫勒拿","Saint Lucia":"圣卢西亚","San Marino":"圣马力诺","Seychelles":"塞舌尔","Siachen Glacier":"锡亚琴冰川","Sint Maarten":"荷属圣马丁","Somaliland":"索马里兰","St-Barthélemy":"圣巴泰勒米","St-Martin":"法属圣马丁","St. Kitts and Nevis":"圣基茨和尼维斯","St. Pierre and Miquelon":"圣皮埃尔和密克隆","St. Vin. and Gren.":"圣文森特和格林纳丁斯","São Tomé and Principe":"圣多美和普林西比","Taiwan":"台湾","Turks and Caicos Is.":"特克斯和凯科斯群岛","U.S. Virgin Is.":"美属维尔京群岛","Vatican":"梵蒂冈","Wallis and Futuna Is.":"瓦利斯和富图纳群岛","eSwatini":"斯威士兰","Åland":"奥兰群岛","Uruguay":"乌拉圭","Suriname":"苏里南","Akrotiri": "阿克罗蒂里", "Baikonur": "拜科努尔", "Bajo Nuevo Bank": "新浅滩", "Clipperton I.": "克利珀顿岛", "Coral Sea Is.": "珊瑚海群岛", "Cyprus U.N. Buffer Zone": "塞浦路斯缓冲区", "Dhekelia": "德凯利亚", "Gibraltar": "直布罗陀", "Scarborough Reef": "黄岩岛", "Serranilla Bank": "塞拉尼亚浅滩", "Spratly Is.": "南沙群岛", "Tuvalu": "图瓦卢", "U.S. Minor Outlying Is.": "美国本土外小岛屿", "USNB Guantanamo Bay": "关塔那摩湾"};
+
+/* ══════════════════════════════════════════════════════════
+   主流程
+   ══════════════════════════════════════════════════════════ */
+let gjFeatures=null;
+const borderGroup = new THREE.Group(), labelGroup = new THREE.Group();
+scene.add(borderGroup, labelGroup);
+
+function imgToTex(img){
+  if(img.width > TEX_MAX){
+    const ctx = imgToCanvas(img, TEX_MAX, TEX_MAX/2);
+    img = ctx.canvas;
+  }
+  const tex = new THREE.Texture(img);
+  tex.needsUpdate = true;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+function imgToCanvas(img, w, h){
+  const c = document.createElement('canvas'); c.width=w; c.height=h;
+  const ctx = c.getContext('2d',{willReadFrequently:true});
+  ctx.drawImage(img,0,0,w,h);
+  return ctx;
+}
+
+/* ── 离线查询网格：所有设备统一 4096×2048（约 10 km），与显示贴图尺寸无关 ──
+   原图按 1:1 分条读取（不经浏览器缩放），先把每个像素还原成带符号高程（米），
+   再按固定的 2×2 平均聚合；海陆掩膜按格心取最近像素。这样同一坐标在任何设备上的计算方法完全相同。 */
+const GRID = { w:4096, h:2048, elev:null, mask:null };
+const yieldUI = () => new Promise(r => setTimeout(r, 0));
+async function readStrips(img, onStrip){          // 1:1 分条读取原图像素（不重采样）
+  const w=img.width, h=img.height, STRIP=256;
+  const c=document.createElement('canvas'); c.width=w; c.height=STRIP;
+  const ctx=c.getContext('2d',{willReadFrequently:true});
+  for(let y0=0;y0<h;y0+=STRIP){
+    const sh=Math.min(STRIP,h-y0);
+    ctx.clearRect(0,0,w,STRIP);
+    ctx.drawImage(img, 0, y0, w, sh, 0, 0, w, sh);
+    onStrip(y0, sh, ctx.getImageData(0,0,w,sh).data);
+    await yieldUI();
+  }
+}
+async function buildElevGrid(landImg, seaImg){
+  const W=GRID.w, H=GRID.h;
+  if(landImg.width!==2*W || landImg.height!==2*H || seaImg.width!==2*W || seaImg.height!==2*H)
+    throw new Error('地形数据尺寸不符（应为 '+2*W+'×'+2*H+'）');
+  const LL=new Float32Array(256), LS=new Float32Array(256);
+  for(let q=0;q<256;q++){ const t=q/255; LL[q]=t*t*8850; LS[q]=t*t*11000; }   // 贴图存 sqrt(h/8850)、sqrt(-h/11000)
+  const sum=new Float32Array(W*H);
+  await readStrips(landImg, (y0,sh,d)=>{ const wn=2*W; for(let y=0;y<sh;y++){ const gy=((y0+y)>>1)*W, r=y*wn*4; for(let x=0;x<wn;x++) sum[gy+(x>>1)]+=LL[d[r+x*4]]; } });
+  await readStrips(seaImg,  (y0,sh,d)=>{ const wn=2*W; for(let y=0;y<sh;y++){ const gy=((y0+y)>>1)*W, r=y*wn*4; for(let x=0;x<wn;x++) sum[gy+(x>>1)]-=LS[d[r+x*4]]; } });
+  const out=new Int16Array(W*H);
+  for(let i=0;i<out.length;i++) out[i]=Math.round(sum[i]/4);
+  return out;
+}
+async function buildMaskGrid(maskImg){
+  const W=GRID.w, H=GRID.h, wn=maskImg.width, hn=maskImg.height, out=new Uint8Array(W*H);
+  const xs=new Int32Array(W); for(let x=0;x<W;x++) xs[x]=Math.min(wn-1,Math.floor((x+.5)*wn/W));
+  let gy=0, ny=Math.floor(.5*hn/H);
+  await readStrips(maskImg, (y0,sh,d)=>{
+    while(gy<H && ny<y0+sh){ const r=(ny-y0)*wn*4, o=gy*W; for(let x=0;x<W;x++) out[o+x]=d[r+xs[x]*4]; gy++; ny=Math.floor((gy+.5)*hn/H); }
+  });
+  return out;
+}
+/* 双线性取样，u 0..1（经度环绕），v 0..1（自北向南） */
+function gridSample(a,u,v,fn){
+  const W=GRID.w, H=GRID.h;
+  const x=u*W-.5, y=Math.max(0,Math.min(H-1.001,v*H-.5));
+  const x0=Math.floor(x), y0=Math.floor(y), tx=x-x0, ty=y-y0;
+  const xa=((x0%W)+W)%W, xb=(xa+1)%W, r0=y0*W, r1=r0+W;
+  const f=fn||(q=>q);
+  return (f(a[r0+xa])*(1-tx)+f(a[r0+xb])*tx)*(1-ty)+(f(a[r1+xa])*(1-tx)+f(a[r1+xb])*tx)*ty;
+}
+const GRID_KM = Math.round(40075/GRID.w);   // 查询网格间距（赤道处约 10 km），所有设备相同
+const EXT = { w:0, h:0, km:0, data:null };
+async function imgTo16(img){
+  const w=img.width, h=img.height, out=new Int16Array(w*h), STRIP=256;
+  const c=document.createElement('canvas'); c.width=w; c.height=STRIP;
+  const ctx=c.getContext('2d',{willReadFrequently:true});
+  for(let y0=0;y0<h;y0+=STRIP){
+    const sh=Math.min(STRIP,h-y0);
+    ctx.clearRect(0,0,w,STRIP);
+    ctx.drawImage(img, 0, y0, w, sh, 0, 0, w, sh);   // 1:1 拷贝，不重采样
+    const d=ctx.getImageData(0,0,w,sh).data;
+    for(let i=0,j=y0*w;i<d.length;i+=4,j++) out[j]=d[i]*256+d[i+1]-11000;
+    await yieldUI();
+  }
+  return out;
+}
+function extAt(lat,lon,isSea){
+  if(!EXT.data) return null;
+  const x=Math.min(EXT.w-1,Math.floor((lon+180)/360*EXT.w)), y=Math.min(EXT.h-1,Math.floor((90-lat)/180*EXT.h));
+  return EXT.data[(isSea?EXT.h+y:y)*EXT.w+x];
+}
+
+/* 地球网格每个顶点的抬升量（与顶点着色器同算法），国界/标注/红点据此贴合地表 */
+let VLIFT=null;
+function buildVertexLift(){
+  VLIFT=new Float32Array((SEG_W+1)*(SEG_H+1));
+  const sm=(a,b,x)=>{ const t=Math.max(0,Math.min(1,(x-a)/(b-a))); return t*t*(3-2*t); };
+  for(let iy=0;iy<=SEG_H;iy++) for(let ix=0;ix<=SEG_W;ix++){
+    const u=ix/SEG_W, v=iy/SEG_H;
+    const e=Math.max(0,gridSample(GRID.elev,u,v))/8850, m=gridSample(GRID.mask,u,v)/255;
+    VLIFT[iy*(SEG_W+1)+ix]=sm(.5,.6,m)*e;
+  }
+}
+function meshLift(lat,lon){
+  if(!VLIFT) return 0;
+  const gx=(lon+180)/360*SEG_W, gy=Math.max(0,Math.min(SEG_H-1e-6,(90-lat)/180*SEG_H));
+  const x0=Math.max(0,Math.min(SEG_W-1,Math.floor(gx))), y0=Math.floor(gy), tx=gx-x0, ty=gy-y0;
+  const f=(ix,iy)=>VLIFT[iy*(SEG_W+1)+ix];
+  return (f(x0,y0)*(1-tx)+f(x0+1,y0)*tx)*(1-ty)+(f(x0,y0+1)*(1-tx)+f(x0+1,y0+1)*tx)*ty;
+}
+function surfR(lat,lon,gap){ return R + meshLift(lat,lon)*LIFT*uniforms.uDisp.value + gap; }
+
+function setProgress(p,txt){
+  document.getElementById('loadpct').textContent=p+'%';
+  document.getElementById('loadfill').style.width=p+'%';
+  if(txt) document.getElementById('loadtxt').textContent=txt;
+}
+const nextFrame=()=>new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
+
+/* 后台加载提示（地球已可操作，国界、查询网格等仍在准备） */
+function bgStat(msg){
+  const el=document.getElementById('bgStat');
+  if(!msg){ el.classList.remove('on'); return; }
+  el.textContent=msg; el.classList.add('on');
+}
+let BG_PENDING = { grid:true, countries:true };
+async function main(){
+  window.__appStarted = true;
+  setProgress(5,'正在加载地形数据…');
+  /* 阶段一：地形、海深、海陆三张图（约 3.7 MB）下载完就先显示地球；国界与极值网格在其后后台加载 */
+  const bytes = { land:[0,1644830], sea:[0,1875385], mask:[0,215244] };   // [已下载, 总量]（总量以响应头为准，缺省用估计值）
+  const onBytes = key => (got,total) => {
+    bytes[key] = [got, total || bytes[key][1]];
+    const g = Object.values(bytes).reduce((a,b)=>a+b[0],0), t = Object.values(bytes).reduce((a,b)=>a+Math.max(b[0],b[1]),0);
+    setProgress(5+Math.min(34,Math.round(g/t*34)), `正在下载地形数据 ${(g/1e6).toFixed(1)} / ${(t/1e6).toFixed(1)} MB`);
+  };
+  const track = (key, p, optional) => p.then(
+    v => { setSrc(key,'ok'); return v; },
+    e => { setSrc(key,'fail'); if(optional){ console.warn(e); return null; } throw e; });
+  const [landImg, seaImg, maskImg] = await Promise.all([
+    track('land',loadImage(ASSETS.land,onBytes('land'))), track('sea',loadImage(ASSETS.sea,onBytes('sea'))), track('mask',loadImage(ASSETS.mask,onBytes('mask')))
+  ]);
+  const extP = track('ext',loadImage(ASSETS.ext),true), topoP = track('countries',loadCountries(ASSETS.countries),true);   // 此时才开始下载，不与主图争带宽
+  setProgress(40,'正在上传贴图到显卡…'); await nextFrame();
+  uniforms.uElev.value = imgToTex(landImg);
+  uniforms.uBath.value = imgToTex(seaImg);
+  uniforms.uMask.value = imgToTex(maskImg);
+  setProgress(100, IS_TOUCH ? '就绪 · 完全离线 · 拖动旋转 / 双指缩放 / 单击查看 / 双击选点' : '就绪 · 完全离线 · 拖拽旋转 / 滚轮缩放 / 悬停探测');
+  applyHash('view');   // 链接带视角时（中英文切换、分享），先恢复视角
+  await nextFrame();
+  setTimeout(()=>document.getElementById('loader').classList.add('off'), 300);
+
+  /* 阶段二：后台建立查询网格（每处理一段就让出主线程，画面保持可拖动） */
+  bgStat('正在建立查询网格…');
+  const elev = await buildElevGrid(landImg, seaImg), mask = await buildMaskGrid(maskImg);
+  GRID.mask = mask; GRID.elev = elev;
+  buildVertexLift();
+  BG_PENDING.grid = false;
+  if(marker.visible && marker.userData.ll) placeMarker(...marker.userData.ll);
+  applyHash('pin');    // 链接带选点时恢复红点与信息条（需要查询网格）
+  if(selected) updateInfo(selected.lat, selected.lon);
+
+  /* 阶段三：国界与国名标注 */
+  bgStat('正在加载国界…');
+  const topo = await topoP;
+  await nextFrame();
+  if(topo) try{
+    gjFeatures = topoToFeatures(topo, 'countries');
+    gjFeatures.forEach(f => {
+      f._bbox = featureBBox(f.geometry);
+      const polys = f.geometry.type==='Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+      polys.forEach(pl=>pl.forEach(r=>{   // 标记跨 180° 经线的环，并备好归一化到 [0,360) 的副本
+        let a=1e9,b=-1e9; r.forEach(p=>{ a=Math.min(a,p[0]); b=Math.max(b,p[0]); });
+        if(b-a>180){ r._cross=true; r._n=r.map(p=>[p[0]<0?p[0]+360:p[0],p[1]]); }
+      }));
+    });
+    drawBorders(borderGroup, gjFeatures);
+    await nextFrame();
+    makeLabels();
+  }catch(e){ gjFeatures=null; setSrc('countries','fail'); console.warn('国界解析失败：',e); }
+  BG_PENDING.countries = false;
+  buildSearchIndex();   // 国界不可用时仍可搜索地标
+
+  /* 阶段四：极值网格 */
+  bgStat('正在加载极值网格…');
+  const extImg = await extP;
+  if(extImg){ EXT.w=extImg.width; EXT.h=extImg.height/2; EXT.km=Math.round(40075/EXT.w); EXT.data=await imgTo16(extImg); }
+  bgStat('');
+  if(selected) updateInfo(selected.lat, selected.lon);
+  registerSW();
+}
+/* 回访缓存：页面加载完成后再注册，不与首次加载争带宽；单文件离线版（file://）不需要 */
+function registerSW(){
+  if(!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return;
+  navigator.serviceWorker.register('sw.js').catch(e=>console.warn('Service worker not enabled:',e));
+}
+function fail(msg){ document.getElementById('loader').classList.remove('off'); bgStat(''); const t=document.getElementById('loadtxt'); if(!/^错误/.test(t.textContent)) t.textContent = '错误：'+msg; }
+
+/* ── 几何绘制 ── */
+function lineMat(rgba, gap){
+  return new THREE.ShaderMaterial({
+    uniforms:{ uDisp:uniforms.uDisp },
+    transparent:true, depthWrite:false,
+    vertexShader:`attribute float aLift; uniform float uDisp;
+      void main(){
+        vec3 p = normalize(position)*(${R.toFixed(1)} + aLift*${LIFT.toFixed(4)}*uDisp + ${gap.toFixed(2)});
+        gl_Position = projectionMatrix*modelViewMatrix*vec4(p,1.);
+      }`,
+    fragmentShader:`void main(){ gl_FragColor = vec4(${rgba.map(v=>v.toFixed(3)).join(',')}); }`
+  });
+}
+const borderMat = lineMat([1,.769,.42,.85], .18);
+const highlightMat = lineMat([.45,.95,1,1], .3);     // 搜索定位的国家或地区边界高亮
+const highlightGroup = new THREE.Group(); scene.add(highlightGroup);
+function drawBorders(group, features, mat){
+  const pos=[], lift=[];
+  const push=(lon,lat)=>{ const v=ll2v(lat,lon,R); pos.push(v.x,v.y,v.z); lift.push(meshLift(lat,lon)); };
+  features.forEach(f=>{
+    const polys = f.geometry.type==='Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+    polys.forEach(poly=>poly.forEach(ring=>{
+      for(let i=0;i<ring.length-1;i++){
+        const [lon1,lat1]=ring[i], [lon2,lat2]=ring[i+1];
+        if(Math.abs(lon2-lon1)>180) continue;            // 跨 180° 经线的连接段
+        const steps=Math.max(1, Math.ceil(Math.hypot(lon2-lon1,lat2-lat1)/.35));   // 细于网格间距，贴合起伏
+        for(let s=0;s<steps;s++){
+          const a=s/steps, b=(s+1)/steps;
+          push(lon1+(lon2-lon1)*a, lat1+(lat2-lat1)*a);
+          push(lon1+(lon2-lon1)*b, lat1+(lat2-lat1)*b);
+        }
+      }
+    }));
+  });
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('aLift', new THREE.Float32BufferAttribute(lift,1));
+  const lines=new THREE.LineSegments(g, mat||borderMat);
+  lines.frustumCulled=false;   // 顶点在着色器中抬升，包围球不准
+  group.add(lines);
+}
+function featureBBox(g){
+  const polys = g.type==='Polygon' ? [g.coordinates] : g.coordinates;
+  let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9;
+  polys.forEach(pl=>pl[0].forEach(p=>{
+    minX=Math.min(minX,p[0]);maxX=Math.max(maxX,p[0]);
+    minY=Math.min(minY,p[1]);maxY=Math.max(maxY,p[1]);}));
+  return [minX,minY,maxX,maxY];
+}
+
+/* ── 国名标注：depthTest 开启，背面自动被地球遮挡 ── */
+const LABEL_GAP = .4;   // 标注离地高度（地球半径 = 100）
+const LABEL_PX = 20;    // 标注在屏幕上的高度（像素）
+/* sizeAttenuation:false 时精灵大小以视场为单位：换算成固定像素高度 */
+function updateLabelScale(){
+  const k = LABEL_PX/appH()*2*Math.tan(camera.fov*DEG/2);
+  labelGroup.children.forEach(sp=>sp.scale.set(k*sp.userData.aspect, k, 1));
+}
+addEventListener('appresize', ()=>updateLabelScale());
+function makeLabels(){
+  gjFeatures.forEach(f=>{
+    const name = f.properties.name;
+    if(!name || name==='Antarctica') return;
+    const c = centroid(f.geometry);
+    if(!c) return;
+    const display = ZH[name] || name;
+    const cv = document.createElement('canvas');
+    const s=Math.min(3,Math.max(2,Math.ceil(devicePixelRatio||1))), ctx=cv.getContext('2d');
+    ctx.font = `600 ${13*s}px "Noto Sans SC","Microsoft YaHei",sans-serif`;
+    const tw = ctx.measureText(display).width + 16*s;
+    cv.width=tw; cv.height=20*s;
+    ctx.font = `600 ${13*s}px "Noto Sans SC","Microsoft YaHei",sans-serif`;
+    ctx.fillStyle='rgba(4,16,28,.55)';
+    roundRect(ctx,0,0,tw,20*s,6*s); ctx.fill();
+    ctx.fillStyle='#ffe2b0'; ctx.textBaseline='middle';
+    ctx.fillText(display, 8*s, 10.5*s);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map:new THREE.CanvasTexture(cv), transparent:true, depthTest:false, sizeAttenuation:false }));   // 固定屏幕大小；遮挡改由朝向判断
+    sp.userData.ll=[c[1],c[0]]; sp.userData.name=name;
+    sp.position.copy(ll2v(c[1], c[0], surfR(c[1],c[0],LABEL_GAP)));
+    sp.userData.aspect = tw/(20*s);
+    sp.renderOrder=10;
+    sp.userData.area = (f._bbox[2]-f._bbox[0])*(f._bbox[3]-f._bbox[1]);
+    labelGroup.add(sp);
+  });
+  updateLabelScale();
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();
+}
+/* 环面积（经纬度平面，带符号） */
+function ringArea(r){ let a=0; for(let i=0,j=r.length-1;i<r.length;j=i++) a+=(r[j][0]-r[i][0])*(r[j][1]+r[i][1]); return a/2; }
+/* 点到多边形（含洞）边界的带符号距离：内部为正 */
+function polyDist(x,y,poly){
+  let inside=false, min=Infinity;
+  for(const ring of poly){
+    for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+      const a=ring[i], b=ring[j];
+      if((a[1]>y)!==(b[1]>y) && x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0]) inside=!inside;
+      let px=b[0], py=b[1], dx=a[0]-px, dy=a[1]-py;
+      if(dx||dy){ const t=((x-px)*dx+(y-py)*dy)/(dx*dx+dy*dy); if(t>1){px=a[0];py=a[1];} else if(t>0){px+=dx*t;py+=dy*t;} }
+      dx=x-px; dy=y-py; min=Math.min(min,dx*dx+dy*dy);
+    }
+  }
+  return (inside?1:-1)*Math.sqrt(min);
+}
+/* polylabel：多边形内部离边界最远的点（适合细长、弯曲的国家，如越南、智利、挪威） */
+function polylabel(poly, precision){
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for(const p of poly[0]){ minX=Math.min(minX,p[0]); minY=Math.min(minY,p[1]); maxX=Math.max(maxX,p[0]); maxY=Math.max(maxY,p[1]); }
+  const w=maxX-minX, h=maxY-minY, size=Math.min(w,h);
+  if(!size) return [minX,minY];
+  const cell=(x,y,hh)=>{ const d=polyDist(x,y,poly); return {x,y,h:hh,d,max:d+hh*Math.SQRT2}; };
+  const q=[];
+  for(let x=minX;x<maxX;x+=size) for(let y=minY;y<maxY;y+=size) q.push(cell(x+size/2,y+size/2,size/2));
+  let best=cell(minX+w/2,minY+h/2,0);
+  for(let n=0; q.length && n<4000; n++){
+    let bi=0; for(let i=1;i<q.length;i++) if(q[i].max>q[bi].max) bi=i;
+    const c=q[bi]; q[bi]=q[q.length-1]; q.pop();
+    if(c.d>best.d) best=c;
+    if(c.max-best.d<=precision) continue;
+    const hh=c.h/2;
+    q.push(cell(c.x-hh,c.y-hh,hh),cell(c.x+hh,c.y-hh,hh),cell(c.x-hh,c.y+hh,hh),cell(c.x+hh,c.y+hh,hh));
+  }
+  return [best.x,best.y];
+}
+function centroid(g){
+  const polys = g.type==='Polygon' ? [g.coordinates] : g.coordinates;
+  let best=null, bestA=-1;
+  polys.forEach(pl=>{ const a=Math.abs(ringArea(pl[0])); if(a>bestA){ bestA=a; best=pl; } });   // 取面积最大的一块
+  if(!best) return null;
+  // 跨 180° 经线时经度归一化到 [0,360)；经度按纬度余弦压缩，减小高纬度变形
+  let minX=1e9,maxX=-1e9,sy=0;
+  best[0].forEach(p=>{ minX=Math.min(minX,p[0]); maxX=Math.max(maxX,p[0]); sy+=p[1]; });
+  const cross=(maxX-minX)>180, k=Math.max(.2,Math.cos(sy/best[0].length*DEG));
+  const P=best.map(r=>r.map(p=>[((cross&&p[0]<0)?p[0]+360:p[0])*k, p[1]]));
+  const [x,y]=polylabel(P, .02);
+  let lon=x/k; if(lon>180) lon-=360;
+  return [lon, y];
+}
+
+/* ── 定位标记 ── */
+const marker = new THREE.Group();
+const pin = new THREE.Mesh(new THREE.SphereGeometry(3.3,20,20),
+  new THREE.MeshBasicMaterial({color:0xff5a5a, depthTest:false, depthWrite:false}));   // 贴地绘制，不被地形遮挡；背面由朝向判断隐藏
+pin.renderOrder=12;
+marker.add(pin); marker.visible=false; scene.add(marker);
+const PIN_PX = IS_TOUCH ? 6 : 7.5;   // 红点在屏幕上的半径（像素）：手机 6，电脑 7.5
+
+let flyRaf=0;
+function flyCam(lat, lon, dist, D){
+  cancelAnimationFrame(flyRaf);
+  const startDir = camera.position.clone().normalize();
+  const endDir = ll2v(lat,lon,1);
+  const qb = new THREE.Quaternion().setFromUnitVectors(startDir,endDir);
+  controls.autoRotate=false; spinning=false; controls.stopMotion();
+  document.getElementById('spinBtn').textContent='自动旋转';
+  const dur=D||1100, t0=performance.now();
+  (function anim(now){
+    const k=Math.min(1,(now-t0)/dur), e=1-Math.pow(1-k,3);
+    const q=new THREE.Quaternion().slerp(qb,e);
+    camera.position.copy(startDir.clone().applyQuaternion(q).multiplyScalar(dist));
+    camera.lookAt(0,0,0);
+    if(k<1) flyRaf=requestAnimationFrame(anim);
+  })(t0);
+}
+function placeMarker(lat,lon){
+  marker.userData.ll=[lat,lon];
+  marker.position.copy(ll2v(lat,lon,surfR(lat,lon,.02)));   // 贴着地表 / 海面
+  marker.lookAt(marker.position.clone().multiplyScalar(2));
+  marker.visible=true;
+  scheduleHash();
+}
+function flyTo(lat, lon, distOverride){
+  lat=Math.max(-90,Math.min(90,lat));
+  lon=((lon+180)%360+360)%360-180;
+  const dist = distOverride || camera.position.length();   // 保持当前缩放，不再拉回固定距离
+  flyCam(lat, lon, dist, 1100);
+  placeMarker(lat,lon);
+}
+/* 当前选点（双击 / 跳转 / 快捷地点 / 微调设定，红点所在位置）；悬停与单击不受它限制 */
+let selected=null;
+/* 搜索定位的国家或地区：标注始终显示（小国也显示），并上移到红点上方 */
+let focusName=null;
+function setFocusLabel(name){
+  focusName=name;
+  labelGroup.children.forEach(sp=>sp.center.set(.5, sp.userData.name===name ? -.35 : .5));
+}
+function clearSelection(){ selected=null; marker.visible=false; infoEl.classList.remove('on'); highlightGroup.clear(); setFocusLabel(null); scheduleHash(); }
+function fmtM(v){ v=Math.round(v); return (v>0?'+':'')+v+' m'; }
+function showElev(el){
+  const b=document.getElementById('iElev');
+  if(!el){ b.textContent='—'; b.className=''; return; }
+  const v=Math.round(el.v);
+  if(!el.isSea){ b.textContent = v>=0 ? '约 +'+v+' m' : '约 '+v+' m（低于海平面）'; b.className='up'; }
+  else{ b.textContent = v<=-1 ? '约 '+v+' m（海深）' : '约 0 m（近岸浅海）'; b.className='dn'; }
+}
+
+/* ── 经典位置参考值（离线内置，坐标已与地形数据核对） ── */
+const PLACES = [{"n": "珠穆朗玛峰", "lat": 27.9881, "lon": 86.925, "v": 8848.86, "t": "peak", "note": "2020 中尼联合测量"}, {"n": "乔戈里峰 K2", "lat": 35.8825, "lon": 76.5133, "v": 8611, "t": "peak", "note": ""}, {"n": "干城章嘉峰", "lat": 27.7025, "lon": 88.1475, "v": 8586, "t": "peak", "note": ""}, {"n": "洛子峰", "lat": 27.9617, "lon": 86.9333, "v": 8516, "t": "peak", "note": ""}, {"n": "马卡鲁峰", "lat": 27.8897, "lon": 87.0889, "v": 8485, "t": "peak", "note": ""}, {"n": "卓奥友峰", "lat": 28.0942, "lon": 86.6608, "v": 8188, "t": "peak", "note": ""}, {"n": "道拉吉里峰", "lat": 28.6967, "lon": 83.4875, "v": 8167, "t": "peak", "note": ""}, {"n": "马纳斯卢峰", "lat": 28.5497, "lon": 84.5597, "v": 8163, "t": "peak", "note": ""}, {"n": "南迦帕尔巴特峰", "lat": 35.2375, "lon": 74.5892, "v": 8126, "t": "peak", "note": ""}, {"n": "安纳布尔纳峰", "lat": 28.5958, "lon": 83.8203, "v": 8091, "t": "peak", "note": ""}, {"n": "加舒尔布鲁木 I 峰", "lat": 35.7244, "lon": 76.6964, "v": 8080, "t": "peak", "note": ""}, {"n": "布洛阿特峰", "lat": 35.8106, "lon": 76.5681, "v": 8051, "t": "peak", "note": ""}, {"n": "加舒尔布鲁木 II 峰", "lat": 35.7575, "lon": 76.6533, "v": 8035, "t": "peak", "note": ""}, {"n": "希夏邦马峰", "lat": 28.3525, "lon": 85.7797, "v": 8027, "t": "peak", "note": ""}, {"n": "公格尔峰", "lat": 38.5944, "lon": 75.3131, "v": 7649, "t": "peak", "note": ""}, {"n": "贡嘎山", "lat": 29.5958, "lon": 101.8794, "v": 7556, "t": "peak", "note": ""}, {"n": "慕士塔格峰", "lat": 38.2783, "lon": 75.1158, "v": 7546, "t": "peak", "note": ""}, {"n": "阿空加瓜山", "lat": -32.6532, "lon": -70.0109, "v": 6961, "t": "peak", "note": "南美洲最高峰"}, {"n": "德纳里峰", "lat": 63.0695, "lon": -151.0074, "v": 6190, "t": "peak", "note": "北美洲最高峰"}, {"n": "乞力马扎罗山", "lat": -3.0758, "lon": 37.3533, "v": 5895, "t": "peak", "note": "非洲最高峰"}, {"n": "厄尔布鲁士山", "lat": 43.3499, "lon": 42.4453, "v": 5642, "t": "peak", "note": "欧洲最高峰"}, {"n": "文森山", "lat": -78.5254, "lon": -85.6171, "v": 4892, "t": "peak", "note": "南极洲最高峰"}, {"n": "查亚峰", "lat": -4.0789, "lon": 137.1583, "v": 4884, "t": "peak", "note": "大洋洲最高峰"}, {"n": "勃朗峰", "lat": 45.8326, "lon": 6.8652, "v": 4806, "t": "peak", "note": ""}, {"n": "马特洪峰", "lat": 45.9763, "lon": 7.6586, "v": 4478, "t": "peak", "note": ""}, {"n": "冒纳凯阿火山", "lat": 19.8207, "lon": -155.4681, "v": 4207, "t": "peak", "note": "山脚在海底，总高超 10000 m"}, {"n": "玉山", "lat": 23.47, "lon": 120.9572, "v": 3952, "t": "peak", "note": "台湾最高峰"}, {"n": "富士山", "lat": 35.3606, "lon": 138.7274, "v": 3776, "t": "peak", "note": ""}, {"n": "科修斯科山", "lat": -36.4559, "lon": 148.2633, "v": 2228, "t": "peak", "note": "澳大利亚大陆最高峰"}, {"n": "泰山 玉皇顶", "lat": 36.2547, "lon": 117.1006, "v": 1545, "t": "peak", "note": ""}, {"n": "死海", "lat": 31.5, "lon": 35.5, "v": -438, "t": "low", "note": "湖面，逐年下降"}, {"n": "艾丁湖", "lat": 42.65, "lon": 89.28, "v": -154, "t": "low", "note": "中国陆地最低点"}, {"n": "挑战者深渊", "lat": 11.3733, "lon": 142.5917, "v": -10935, "t": "deep", "note": "马里亚纳海沟，地球最深点"}, {"n": "地平线深渊", "lat": -23.2617, "lon": -174.7267, "v": -10800, "t": "deep", "note": "汤加海沟"}];
+const PLACE_KM = { peak:3, deep:10, low:15 };   // 进入该半径即显示参考值（同时给出格网估算）
+function nearPlace(lat,lon){
+  let best=null, bd=1e9;
+  for(const p of PLACES){
+    let dlo=Math.abs(p.lon-lon); if(dlo>180) dlo=360-dlo;
+    const d=Math.hypot((p.lat-lat)*111.2, dlo*111.2*Math.cos(lat*DEG));
+    if(d<=PLACE_KM[p.t] && d<bd){ bd=d; best=p; }
+  }
+  return best;
+}
+
+function updateInfo(lat,lon){
+  document.getElementById('iCoord').textContent=`LAT ${lat.toFixed(4)}° · LON ${lon.toFixed(4)}°`;
+  const el=elevAt(lat,lon), pl=nearPlace(lat,lon), src=document.getElementById('iSrc');
+  if(pl){   // 地标附近：主数值显示地标参考值，同时给出该点的格网估算
+    const b=document.getElementById('iElev');
+    b.textContent=(pl.v>0?'+':'')+pl.v+' m'; b.className=pl.v>0?'up':'dn';
+    src.textContent=`📍 ${pl.n}（参考值）`+(el?` · 格网估算 ${fmtM(el.v)}`:'')+(pl.note?' · '+pl.note:'');
+  }else{
+    showElev(el);
+    if(!GRID.elev) src.textContent='查询网格建立中，稍后可查询';
+    const ex=el && extAt(lat,lon,el.isSea);
+    src.textContent = !el ? '' : `格网估算（约 ${GRID_KM} km）` +
+      (ex!=null ? ` · 所在网格（约 ${EXT.km} km）${el.isSea?'最深':'最高'} ${fmtM(ex)}` : '');
+  }
+  let place;
+  if(!gjFeatures) place = BG_PENDING.countries ? '国家或地区数据加载中…' : '国家或地区数据不可用';
+  else{ const cname=countryAt(lat,lon); place = cname ? (ZH[cname]||cname) : (el && !el.isSea ? '未识别国家或地区' : '海洋'); }
+  document.getElementById('iCountry').textContent = place;
+}
+function lockTo(lat,lon){
+  lat=Math.max(-90,Math.min(90,Math.round(lat*1e4)/1e4));
+  lon=((lon+180)%360+360)%360-180; lon=Math.round(lon*1e4)/1e4;
+  document.getElementById('lat').value=+lat.toFixed(4);
+  document.getElementById('lon').value=+lon.toFixed(4);
+  flyTo(lat,lon);
+  selected={lat,lon};
+  infoEl.classList.add('on');      // 选点后立即显示信息条
+  updateInfo(lat,lon);
+}
+function microStep(lat,lon){
+  lat=Math.max(-90,Math.min(90,Math.round(lat*1e4)/1e4));
+  lon=((lon+180)%360+360)%360-180; lon=Math.round(lon*1e4)/1e4;
+  document.getElementById('lat').value=+lat.toFixed(4);
+  document.getElementById('lon').value=+lon.toFixed(4);
+  placeMarker(lat,lon);            // 只移动红点，不转动视角、不把红点拉回屏幕中央
+  selected={lat,lon};
+  infoEl.classList.add('on');
+  updateInfo(lat,lon);
+}
+/* ── 坐标解析（严格）：十进制度，或度分秒（°′″ / '" / 度分秒 / 空格分隔）；
+   方位 N/S/E/W 或 北纬/南纬/东经/西经 只能出现一次，放在开头或结尾；
+   正负号与方位不能同时使用（如 -30N 视为冲突）；多余字符一律拒绝 ── */
+const HEMI_RE='北纬|南纬|东经|西经|[NSEW北南东西]';
+const COORD_RE=new RegExp('^(?:('+HEMI_RE+')\\s*)?([+-])?\\s*'+
+  '(\\d+(?:\\.\\d+)?)\\s*(?:°|度)?'+
+  '(?:\\s*(\\d+(?:\\.\\d+)?)\\s*(?:′|\x27|分)?'+
+  '(?:\\s*(\\d+(?:\\.\\d+)?)\\s*(?:″|"|\x27\x27|秒)?)?)?'+
+  '\\s*('+HEMI_RE+')?$');
+function parseCoord(str, isLat){
+  const t=String(str||'').trim().toUpperCase().replace(/[−–—]/g,'-').replace(/[’‘]/g,"'").replace(/[“”]/g,'"');
+  const m=COORD_RE.exec(t);
+  if(!m) return NaN;
+  const [,h1,sg,dS,mS,sS,h2]=m;
+  if(h1 && h2) return NaN;                                   // 方位只能出现一次
+  const h=h1||h2;
+  if(h && sg) return NaN;                                    // 正负号与方位冲突
+  let sign = sg==='-' ? -1 : 1;
+  if(h){
+    const c=h[0], latH='NS北南'.includes(c);
+    if(latH!==isLat) return NaN;                             // 纬度只能用 N/S，经度只能用 E/W
+    if('S南W西'.includes(c)) sign=-1;
+  }
+  const d=+dS, mi=mS!==undefined?+mS:0, se=sS!==undefined?+sS:0;
+  if(mS!==undefined && (d%1 || mi>=60)) return NaN;          // 有分时：度为整数，分 <60
+  if(sS!==undefined && (mi%1 || se>=60)) return NaN;         // 有秒时：分为整数，秒 <60
+  const v=sign*(d+mi/60+se/3600);
+  return Math.abs(v) <= (isLat?90:180) ? v : NaN;
+}
+function readCoordInputs(){
+  const lat=parseCoord(document.getElementById('lat').value,true);
+  const lon=parseCoord(document.getElementById('lon').value,false);
+  const msg=document.getElementById('coordMsg');
+  if(isNaN(lat)||isNaN(lon)){
+    msg.textContent = isNaN(lat) ? '纬度格式不对：应在 -90~90 度之间，如 30.57、30°34′12″N；正负号与 N/S 不能同时用'
+                                 : '经度格式不对：应在 -180~180 度之间，如 104.07、104°4′12″E；正负号与 E/W 不能同时用';
+    msg.classList.add('err'); return null;
+  }
+  msg.textContent='也支持度分秒，如 30°34′12″N'; msg.classList.remove('err');
+  return {lat,lon};
+}
+document.getElementById('goBtn').onclick = ()=>{ const c=readCoordInputs(); if(c) lockTo(c.lat,c.lon); };
+['lat','lon'].forEach(id=>document.getElementById(id).addEventListener('keydown',e=>{
+  if(e.key==='Enter'){ e.preventDefault(); document.getElementById('goBtn').click(); e.target.blur(); }
+}));
+document.getElementById('homeBtn').onclick = ()=>{ flyCam(20,0,300,1100); };
+let spinning=true;
+document.getElementById('spinBtn').onclick = e=>{
+  spinning=!spinning; controls.autoRotate=spinning;
+  e.target.textContent = spinning?'停止旋转':'自动旋转';
+};
+controls.addEventListener('start', ()=>{
+  if(spinning){ spinning=false; controls.autoRotate=false;
+    document.getElementById('spinBtn').textContent='自动旋转'; }
+});
+
+/* ── 位置写入链接：#view=纬度,经度,镜头距离&pin=纬度,经度
+   中英文切换时带上它，打开后回到同一视角与选点；地址栏链接也可直接分享 ── */
+function viewHash(){
+  const c=camera.position, d=c.length(), f=x=>+x.toFixed(4);
+  const lat=90-Math.acos(Math.max(-1,Math.min(1,c.y/d)))/DEG;
+  const lon=((Math.atan2(c.z,-c.x)/DEG-180)%360+540)%360-180;
+  return `#view=${f(lat)},${f(lon)},${+d.toFixed(1)}` + (selected ? `&pin=${f(selected.lat)},${f(selected.lon)}` : '');
+}
+let hashT=0;
+function scheduleHash(){
+  if(hashT || spinning) return;   // 自动旋转时不改地址栏
+  hashT=setTimeout(()=>{ hashT=0; try{ history.replaceState(null,'',viewHash()); }catch(e){} }, 600);
+}
+controls.addEventListener('change', scheduleHash);
+const HASH0 = location.hash;   // 打开时的位置参数（后台加载期间地址栏可能被改写，所以先存下来）
+function applyHash(part){
+  const q=new URLSearchParams(HASH0.slice(1)), num=k=>(q.get(k)||'').split(',').map(Number);
+  const v=num('view'), p=num('pin'), ok=(a,n)=>a.length===n && a.every(isFinite);
+  if(part!=='pin' && ok(v,3) && Math.abs(v[0])<=90){
+    spinning=false; controls.autoRotate=false; controls.stopMotion(); document.getElementById('spinBtn').textContent='自动旋转';
+    camera.position.copy(ll2v(v[0],v[1],Math.max(controls.minDistance,Math.min(controls.maxDistance,v[2]))));
+    camera.lookAt(0,0,0);
+  }
+  if(part!=='view' && ok(p,2) && Math.abs(p[0])<=90){
+    const lat=p[0], lon=Math.round((((p[1]+180)%360+360)%360-180)*1e4)/1e4;
+    document.getElementById('lat').value=lat; document.getElementById('lon').value=lon;
+    selected={lat,lon}; placeMarker(lat,lon);
+    infoEl.classList.add('on'); updateInfo(lat,lon);
+  }
+}
+{ const a=document.querySelector('.brand .lang');   // 网页版的中英文切换链接
+  if(a) a.addEventListener('click', e=>{ e.preventDefault(); location.href=a.getAttribute('href')+viewHash(); }); }
+
+/* ── 离线搜索：国家或地区（Natural Earth 名称 + 中文名）与地标（内置参考值 + 快捷地点） ── */
+let SEARCH=[];
+function buildSearchIndex(){
+  const recs=[], seen=new Set();
+  (gjFeatures||[]).forEach(f=>{
+    const en=f.properties.name; if(!en) return;
+    recs.push({ type:'region', zh:ZH[en]||en, en, f });
+  });
+  const addPlace=(zh,lat,lon)=>{
+    if(seen.has(zh)) return; seen.add(zh);
+    const same=recs.find(r=>r.type==='place' && Math.abs(r.lat-lat)<.01 && Math.abs(r.lon-lon)<.01);
+    if(same){ (same._extra=same._extra||[]).push(zh); return; }   // 同一位置（如快捷地点与地标）合并，名称作为别名
+    recs.push({ type:'place', zh, en:'', lat, lon });
+  };
+  PLACES.forEach(p=>addPlace(p.n,p.lat,p.lon));
+  spots.forEach(([n,lat,lon])=>{ if(!recs.some(r=>r.type==='region'&&r.zh===n)) addPlace(n,lat,lon); });   // 快捷地点（与国家同名的如「冰岛」除外）
+  const ALIAS={   // 常用简称与英文名
+    '珠穆朗玛峰':['珠峰','Everest','Qomolangma','Chomolungma'],'乔戈里峰 K2':['乔戈里峰','K2'],'乞力马扎罗山':['乞力马扎罗','Kilimanjaro'],
+    '干城章嘉峰':['Kangchenjunga'],'洛子峰':['Lhotse'],'马卡鲁峰':['Makalu'],'卓奥友峰':['Cho Oyu'],'道拉吉里峰':['Dhaulagiri'],
+    '马纳斯卢峰':['Manaslu'],'南迦帕尔巴特峰':['Nanga Parbat'],'安纳布尔纳峰':['Annapurna'],'希夏邦马峰':['Shishapangma'],
+    '公格尔峰':['Kongur'],'贡嘎山':['Minya Konka','Gongga'],'慕士塔格峰':['Muztagh Ata'],'阿空加瓜山':['Aconcagua'],
+    '德纳里峰':['Denali','McKinley','麦金利山'],'厄尔布鲁士山':['Elbrus'],'文森山':['Vinson'],'查亚峰':['Puncak Jaya','Carstensz'],
+    '勃朗峰':['Mont Blanc'],'马特洪峰':['Matterhorn'],'冒纳凯阿火山':['Mauna Kea'],'玉山':['Yushan'],'富士山':['Fuji'],
+    '科修斯科山':['Kosciuszko'],'泰山 玉皇顶':['泰山','Mount Tai'],'死海':['Dead Sea'],'艾丁湖':['Ayding'],
+    '挑战者深渊':['Challenger Deep','马里亚纳'],'地平线深渊':['Horizon Deep'],'马里亚纳海沟':['Mariana Trench','马里亚纳'],
+    '汤加海沟':['Tonga Trench'],'科罗拉多大峡谷':['大峡谷','Grand Canyon'],'东非大裂谷':['Great Rift Valley','东非裂谷'],
+    '青藏高原':['Tibetan Plateau','世界屋脊'],'亚马孙平原':['亚马逊','Amazon'],'大堡礁':['Great Barrier Reef'],
+    '美国':['USA','US','America','United States'],'英国':['UK','Britain','England'],'中国':['PRC'],'韩国':['Korea'],
+    '朝鲜':['North Korea','DPRK'],'阿联酋':['UAE'],'刚果（金）':['刚果金','DR Congo','DRC'],'刚果（布）':['刚果布'],
+  };
+  recs.forEach(r=>{ r._k=[r.zh, r.en, ...(ALIAS[r.zh]||[]), ...(r._extra||[])].filter(Boolean).map(k=>k.toLowerCase()); });
+  SEARCH=recs;
+}
+function searchRecords(q){
+  q=q.trim().toLowerCase(); if(!q) return [];
+  const out=[];
+  for(const r of SEARCH){
+    let sc=9;
+    for(const k of r._k){ if(k===q) sc=Math.min(sc,0); else if(k.startsWith(q)) sc=Math.min(sc,1); else if(k.includes(q)) sc=Math.min(sc,2); }
+    if(sc<9) out.push([sc,r]);
+  }
+  out.sort((a,b)=>a[0]-b[0] || (a[1].type===b[1].type?0:a[1].type==='region'?-1:1) || a[1].zh.length-b[1].zh.length);
+  return out.slice(0,10).map(x=>x[1]);
+}
+/* 国家或地区：最大一块多边形的跨度（度），用于决定镜头距离 */
+function regionSpan(f){
+  const polys = (f.geometry.type==='Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates).map(pl=>pl[0]);
+  const all=polys.flat(), cross=all.some(p=>p[0]>170)&&all.some(p=>p[0]<-170);
+  const X=p=>cross&&p[0]<0?p[0]+360:p[0];
+  const info=polys.map(r=>{ let sx=0,sy=0; r.forEach(p=>{sx+=X(p);sy+=p[1];}); return {r, a:Math.abs(ringArea(r)), cx:sx/r.length, cy:sy/r.length}; });
+  const main=info.reduce((a,b)=>b.a>a.a?b:a);
+  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+  info.forEach(o=>{   // 主体 + 面积≥主体 2%、且距主体 20° 以内的岛屿
+    if(o!==main && (o.a<main.a*.02 || Math.hypot((o.cx-main.cx)*Math.cos(main.cy*DEG), o.cy-main.cy)>20)) return;
+    o.r.forEach(p=>{ const x=X(p); x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,p[1]); y1=Math.max(y1,p[1]); });
+  });
+  return Math.max((x1-x0)*Math.cos((y0+y1)/2*DEG), y1-y0);
+}
+function selectSearch(r){
+  const inp=document.getElementById('srch');
+  inp.value=r.zh; closeSearch(); inp.blur();
+  highlightGroup.clear(); setFocusLabel(null);
+  if(r.type==='region'){            // 高亮边界，红点放在中心位置（内部离边界最远的点，与标注同一处）
+    const c=centroid(r.f.geometry); if(!c) return;
+    drawBorders(highlightGroup,[r.f],highlightMat);
+    setFocusLabel(r.f.properties.name);
+    const lat=Math.round(c[1]*1e4)/1e4, lon=Math.round(c[0]*1e4)/1e4;
+    document.getElementById('lat').value=lat; document.getElementById('lon').value=lon;
+    flyCam(lat,lon, R+Math.max(16,Math.min(250,regionSpan(r.f)*2.7)), 1100);
+    placeMarker(lat,lon);
+    selected={lat,lon};
+    infoEl.classList.add('on');
+    updateInfo(lat,lon);
+    toast(`已定位 ${r.zh}，红点为其中心位置`, 2600);
+  }else{
+    lockTo(r.lat,r.lon);            // 地标：选点（结果中地标参考值与格网估算分开显示）
+  }
+}
+let srchRes=[], srchAct=-1;
+function closeSearch(){ document.getElementById('srchList').classList.remove('on'); srchAct=-1; }
+function renderSearch(){
+  const list=document.getElementById('srchList'), q=document.getElementById('srch').value.trim();
+  if(!q){ closeSearch(); list.innerHTML=''; return; }
+  srchRes=searchRecords(q);
+  list.innerHTML = srchRes.length
+    ? srchRes.map((r,i)=>`<div class="srch-item${i===srchAct?' act':''}" data-i="${i}" role="option">`+
+        `<span class="ty${r.type==='place'?' pl':''}">${r.type==='region'?'国家或地区':'地标'}</span>`+
+        `<span>${r.zh}</span>${r.en&&r.en!==r.zh?`<span class="en">${r.en}</span>`:''}</div>`).join('')
+    : `<div class="srch-empty">${SEARCH.length?'未找到「'+q.replace(/[<>&"]/g,'')+'」，目前只收录国家或地区及内置地标':'国家或地区数据不可用'}</div>`;
+  list.classList.add('on');
+}
+(function(){
+  const inp=document.getElementById('srch'), list=document.getElementById('srchList');
+  inp.addEventListener('input', ()=>{ srchAct=-1; renderSearch(); });
+  inp.addEventListener('focus', ()=>{ if(inp.value.trim()) renderSearch(); });
+  inp.addEventListener('blur', ()=>setTimeout(closeSearch,150));
+  inp.addEventListener('keydown', e=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault(); if(!srchRes.length) return;
+      srchAct=(srchAct+(e.key==='ArrowDown'?1:-1)+srchRes.length)%srchRes.length; renderSearch();
+      const el=list.querySelector('.act'); if(el) el.scrollIntoView({block:'nearest'});
+    }else if(e.key==='Enter'){
+      e.preventDefault(); const r=srchRes[srchAct>=0?srchAct:0]; if(r && inp.value.trim()) selectSearch(r);
+    }else if(e.key==='Escape'){ closeSearch(); inp.blur(); }
+  });
+  list.addEventListener('pointerdown', e=>{   // pointerdown 先于输入框 blur，保证点得中
+    const it=e.target.closest('.srch-item'); if(!it) return;
+    e.preventDefault(); selectSearch(srchRes[+it.dataset.i]);
+  });
+})();
+
+const spots=[   // 每行 3 个：高峰 / 海洋 / 地貌 / 其他
+  ['珠穆朗玛峰',27.9881,86.9250],['乔戈里峰 K2',35.8825,76.5133],['乞力马扎罗山',-3.0758,37.3533],
+  ['马里亚纳海沟',11.3733,142.5917],['汤加海沟',-23.2617,-174.7267],['死海',31.5,35.5],
+  ['科罗拉多大峡谷',36.06,-112.14],['东非大裂谷',-0.77,36.40],['青藏高原',33.0,88.0],
+  ['亚马孙平原',-3.47,-62.21],['冰岛',64.96,-19.02],['大堡礁',-18.29,147.70]];
+spots.forEach(s=>{
+  const el=document.createElement('span');
+  el.className='chip'; el.textContent=s[0];
+  el.onclick=()=>lockTo(s[1],s[2]);
+  document.getElementById('chips').appendChild(el);
+});
+
+/* ── 拾取与悬停探测 ── */
+const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
+function pick(e){
+  const q=toApp(e.clientX,e.clientY);
+  mouse.x=(q.x/appW())*2-1;
+  mouse.y=-(q.y/appH())*2+1;
+  ray.setFromCamera(mouse,camera);
+  const hit=ray.intersectObject(earth)[0];
+  if(!hit) return null;
+  const v=hit.point.clone().normalize();
+  const lat=90-Math.acos(v.y)/DEG;
+  let lon=Math.atan2(v.z,-v.x)/DEG-180;
+  if(lon<-180)lon+=360;
+  return {lat,lon};
+}
+renderer.domElement.addEventListener('dblclick', e=>{
+  const p=pick(e);
+  if(p) lockTo(p.lat,p.lon);
+});
+const infoEl=document.getElementById('info');
+let hoverTick=false;
+renderer.domElement.addEventListener('mousemove', e=>{
+  if(hoverTick)return; hoverTick=true;
+  requestAnimationFrame(()=>{
+    hoverTick=false;
+    const p=pick(e);
+    if(!p){                          // 鼠标移出地球：显示已选的点，没有选点则隐藏
+      if(selected) updateInfo(selected.lat,selected.lon); else infoEl.classList.remove('on');
+      return;
+    }
+    infoEl.classList.add('on');
+    updateInfo(p.lat,p.lon);
+  });
+});
+
+/* 屏幕中央的短暂提示 */
+function toast(msg, ms){
+  const h=document.getElementById('rotateHint');
+  h.textContent=msg; h.classList.add('show');
+  clearTimeout(toast.t); toast.t=setTimeout(()=>h.classList.remove('show'), ms||2200);
+}
+/* 触摸设备：单击 = 查看该点（相当于电脑的悬停）；双击 = 选点（红点 + 输入框） */
+let tStartX=0,tStartY=0,tStartTime=0, lastTap=null, tapTimer=0;
+renderer.domElement.addEventListener('touchstart', e=>{
+  const t=e.touches[0]; tStartX=t.clientX; tStartY=t.clientY; tStartTime=performance.now();
+},{passive:true});
+renderer.domElement.addEventListener('touchend', e=>{
+  const t=e.changedTouches[0];
+  const dt=performance.now()-tStartTime;
+  const dx=Math.abs(t.clientX-tStartX), dy=Math.abs(t.clientY-tStartY);
+  if(dt<350 && dx<12 && dy<12){            // 轻点：非拖拽
+    const p=pick(t); if(!p) return;
+    const now=performance.now();
+    if(lastTap && now-lastTap.t<320 && Math.hypot(t.clientX-lastTap.x, t.clientY-lastTap.y)<30){
+      clearTimeout(tapTimer); lastTap=null;
+      lockTo(p.lat,p.lon);                  // 双击：选点
+      return;
+    }
+    lastTap={ t:now, x:t.clientX, y:t.clientY };
+    clearTimeout(tapTimer);
+    tapTimer=setTimeout(()=>{               // 等待确认不是双击，再按单击处理
+      lastTap=null;
+      infoEl.classList.add('on'); updateInfo(p.lat,p.lon);
+    }, 320);
+  }
+},{passive:true});
+
+/* ── 键盘微调 / 解锁 ── */
+addEventListener('keydown', e=>{
+  const ae=document.activeElement;
+  if(ae && ae.tagName==='INPUT' && ae.type!=='range' && ae.type!=='checkbox') return;   // 输入框（坐标、搜索）聚焦时不干扰
+  if(e.key==='Escape'){ if(window.closeLic && closeLic()) return; clearSelection(); return; }
+  const c=readCoordInputs(); if(!c) return;
+  let {lat,lon}=c;
+  const st=.01;
+  switch(e.key){
+    case 'ArrowUp': lat+=st; break;
+    case 'ArrowDown': lat-=st; break;
+    case 'ArrowRight': lon+=st; break;
+    case 'ArrowLeft': lon-=st; break;
+    default: return;
+  }
+  e.preventDefault();
+  microStep(lat, lon);
+});
+/* 海拔/海深：统一查询网格（带符号高程，米）双线性插值；海陆由掩膜判定 */
+function elevAt(lat,lon){
+  if(!GRID.elev) return null;
+  lon=((lon+180)%360+360)%360-180; lat=Math.max(-90,Math.min(90,lat));
+  const u=(lon+180)/360, v=(90-lat)/180;
+  const h=gridSample(GRID.elev,u,v);
+  if(!isFinite(h)) return null;
+  return { v:h, isSea: gridSample(GRID.mask,u,v) <= 127.5 };
+}
+function countryAt(lat,lon){
+  if(!gjFeatures) return null;
+  for(const f of gjFeatures){
+    const bb=f._bbox;
+    if(lon<bb[0]-.5||lon>bb[2]+.5||lat<bb[1]-.5||lat>bb[3]+.5) continue;
+    const polys=f.geometry.type==='Polygon'?[f.geometry.coordinates]:f.geometry.coordinates;
+    for(const poly of polys){
+      if(inRing(lon,lat,poly[0])){
+        let hole=false;
+        for(let i=1;i<poly.length;i++) if(inRing(lon,lat,poly[i])) hole=true;
+        if(!hole) return f.properties.name;
+      }
+    }
+  }
+  return null;
+}
+function inRing(x,y,ring){
+  if(ring._cross){ ring=ring._n; if(x<0) x+=360; }
+  let inside=false;
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+    const xi=ring[i][0],yi=ring[i][1],xj=ring[j][0],yj=ring[j][1];
+    if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+
+/* ── 图层开关 / 滑块 ── */
+document.getElementById('lyBorders').onchange=e=>borderGroup.visible=e.target.checked;
+document.getElementById('lyLabels').onchange=e=>labelGroup.visible=e.target.checked;
+/* ── 右下角标尺：用与地球着色器相同的配色公式生成，跟随图层开关变化 ── */
+const mix3=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*Math.min(1,Math.max(0,t)));
+function landCol(m){   // 与片元着色器 landCol 一致
+  if(m<200) return mix3([.30,.52,.32],[.42,.60,.34],m/200);
+  if(m<500) return mix3([.42,.60,.34],[.58,.62,.38],(m-200)/300);
+  if(m<1500) return mix3([.58,.62,.38],[.68,.58,.38],(m-500)/1000);
+  if(m<3000) return mix3([.68,.58,.38],[.78,.66,.48],(m-1500)/1500);
+  if(m<5200) return mix3([.78,.66,.48],[.86,.80,.70],(m-3000)/2200);
+  return mix3([.86,.80,.70],[.97,.97,.97],(m-5200)/2000);
+}
+function oceanCol(m){  // 与片元着色器 oceanCol 一致
+  if(m<200) return mix3([.22,.62,.72],[.16,.48,.66],m/200);
+  if(m<1500) return mix3([.16,.48,.66],[.10,.34,.52],(m-200)/1300);
+  if(m<4000) return mix3([.10,.34,.52],[.06,.21,.38],(m-1500)/2500);
+  return mix3([.06,.21,.38],[.02,.09,.20],(m-4000)/4000);
+}
+/* 标尺位置(%) ↔ 高程(m)：与刻度标注对应的分段线性映射 */
+const LEGEND_STOPS=[[0,8848],[4,8848],[18,3000],[34,1000],[45,200],[50,0],[58,-1000],[72,-4000],[86,-8000],[97,-11000],[100,-11000]];
+function legendElev(pct){
+  for(let i=1;i<LEGEND_STOPS.length;i++){ const [p0,e0]=LEGEND_STOPS[i-1],[p1,e1]=LEGEND_STOPS[i];
+    if(pct<=p1) return p1===p0 ? e1 : e0+(e1-e0)*(pct-p0)/(p1-p0); }
+  return -11000;
+}
+function updateLegend(){
+  const hyp=uniforms.uHypso.value>.5, bat=uniforms.uBathy.value>.5, stops=[];
+  const css=c=>`rgb(${c.map(v=>Math.round(Math.min(1,v)*255)).join(',')})`;
+  for(let pct=0;pct<=100;pct+=1){
+    const h=legendElev(pct);
+    let c;
+    if(pct<50) c = hyp ? landCol(h) : (v=>[v,v,v])(.35+.5*Math.sqrt(Math.max(0,h)/8850));   // 关闭分层设色时为灰度
+    else c = bat ? oceanCol(-h) : [.18,.45,.62];                                              // 关闭深度渐变时为单一蓝色
+    stops.push(`${css(c)} ${pct}%`);
+    if(pct===49) stops.push(`${css(c)} 49.9%`);   // 海平面处颜色硬切换
+  }
+  document.querySelector('#legend .bar').style.background=`linear-gradient(to bottom,${stops.join(',')})`;
+}
+updateLegend();
+document.getElementById('lyHypso').onchange=e=>{ uniforms.uHypso.value=e.target.checked?1:0; updateLegend(); };
+document.getElementById('lyBathy').onchange=e=>{ uniforms.uBathy.value=e.target.checked?1:0; updateLegend(); };
+document.getElementById('lyAtmo').onchange=e=>atmo.visible=e.target.checked;
+document.getElementById('dispSlider').oninput=e=>{
+  uniforms.uDisp.value=+e.target.value;
+  labelGroup.children.forEach(sp=>{ const [la,lo]=sp.userData.ll; sp.position.copy(ll2v(la,lo,surfR(la,lo,LABEL_GAP))); });
+  if(marker.visible && marker.userData.ll) placeMarker(...marker.userData.ll);
+  document.getElementById('dispVal').textContent=(+e.target.value).toFixed(1)+'×';
+};
+
+/* ── 数据与许可 ── */
+(function(){
+  const box=document.getElementById('licBox');
+  const open=e=>{ e.preventDefault(); box.classList.add('on'); document.getElementById('licBody').scrollTop=0; };
+  const close=()=>box.classList.remove('on');
+  document.querySelectorAll('.licOpen').forEach(a=>a.addEventListener('click',open));
+  document.getElementById('licClose').addEventListener('click',close);
+  box.addEventListener('click',e=>{ if(e.target===box) close(); });
+  window.closeLic=()=>{ if(!box.classList.contains('on')) return false; close(); return true; };
+})();
+
+/* ── 移动端控制台抽屉 ── */
+(function(){
+  const panel=document.getElementById('panel');
+  const openBtn=document.getElementById('menuBtn');
+  const closeBtn=document.getElementById('menuClose');
+  function setOpen(open){ panel.classList.toggle('mobOpen', open); }
+  openBtn.addEventListener('click', ()=>setOpen(true));
+  closeBtn.addEventListener('click', ()=>setOpen(false));
+  addEventListener('keydown', e=>{ if(e.key==='Escape') setOpen(false); });
+})();
+
+/* ── 旋转横屏时控制台的上下滑动：浏览器会按屏幕方向判断滑动，这里换算到画面方向后自行滚动 ── */
+['panel','licBody'].forEach(function(id){
+  const panel=document.getElementById(id);
+  let last=null, v=0, moved=false, raf=0;
+  panel.addEventListener('touchstart', e=>{
+    if(!ROT.on || e.target.type==='range') return;
+    cancelAnimationFrame(raf);
+    const t=e.touches[0]; last={ y:toApp(t.clientX,t.clientY).y, t:performance.now() }; moved=false; v=0;
+  }, {passive:true});
+  panel.addEventListener('touchmove', e=>{
+    if(!ROT.on || !last) return;
+    const t=e.touches[0], y=toApp(t.clientX,t.clientY).y, dy=y-last.y, now=performance.now();
+    if(!moved && Math.abs(dy)<6) return;              // 小位移视为点按
+    moved=true; e.preventDefault();
+    panel.scrollTop-=dy; v=dy/Math.max(8,now-last.t); last={y,t:now};
+  }, {passive:false});
+  panel.addEventListener('touchend', ()=>{
+    if(!last) return; last=null;
+    if(!moved) return;
+    (function fling(){ if(Math.abs(v)<.02) return; panel.scrollTop-=v*16; v*=.94; raf=requestAnimationFrame(fling); })();
+  });
+});
+
+/* ── 旋转横屏时滑块拖动：浏览器按屏幕方向识别，改为按画面方向换算数值 ── */
+document.querySelectorAll('#panel input[type=range]').forEach(el=>{
+  function setFrom(t){
+    const r=el.getBoundingClientRect();              // 屏幕上的矩形；旋转后画面的 x 对应屏幕的 y
+    const f=Math.min(1,Math.max(0,(toApp(t.clientX,t.clientY).x - r.top)/(r.bottom-r.top)));
+    const min=+el.min, max=+el.max, step=+el.step||1;
+    const v=Math.round((min+f*(max-min))/step)*step;
+    if(+el.value!==v){ el.value=v; el.dispatchEvent(new Event('input',{bubbles:true})); }
+  }
+  el.addEventListener('touchstart', e=>{ if(!ROT.on) return; e.preventDefault(); setFrom(e.touches[0]); }, {passive:false});
+  el.addEventListener('touchmove',  e=>{ if(!ROT.on) return; e.preventDefault(); setFrom(e.touches[0]); }, {passive:false});
+});
+
+/* ── 方向微调按钮 / 解锁（移动端无键盘） ── */
+(function(){
+  const DSTEP=.01;
+  function nudge(d){
+    const c=readCoordInputs(); if(!c) return;
+    let {lat,lon}=c;
+    if(d==='up')lat+=DSTEP; else if(d==='down')lat-=DSTEP;
+    else if(d==='right')lon+=DSTEP; else if(d==='left')lon-=DSTEP;
+    microStep(lat,lon);
+  }
+  /* 按住连续移动：按下先走一步，0.4 秒后开始连发，按得越久越快（最快约每秒 25 步） */
+  document.querySelectorAll('.dbtn[data-d]').forEach(b=>{
+    let timer=0, t0=0;
+    const stop=()=>{ clearTimeout(timer); timer=0; b.classList.remove('hold'); };
+    const tick=()=>{
+      nudge(b.dataset.d);
+      const held=performance.now()-t0;
+      timer=setTimeout(tick, held<1500 ? 110 : held<3000 ? 70 : 40);
+    };
+    b.addEventListener('pointerdown', e=>{
+      e.preventDefault(); stop();
+      try{ b.setPointerCapture(e.pointerId); }catch(err){}
+      t0=performance.now(); b.classList.add('hold');
+      nudge(b.dataset.d);
+      timer=setTimeout(tick, 400);
+    });
+    ['pointerup','pointercancel','lostpointercapture'].forEach(ev=>b.addEventListener(ev, stop));
+    b.addEventListener('contextmenu', e=>e.preventDefault());   // 长按不弹系统菜单
+    /* 安卓长按约 0.5 秒会被浏览器接管（选字/复制菜单）并取消指针事件，导致连发中断：
+       在 touchstart 上阻止默认行为，浏览器就不会再进入长按流程 */
+    b.addEventListener('touchstart', e=>e.preventDefault(), {passive:false});
+    b.addEventListener('touchend', e=>{ e.preventDefault(); stop(); }, {passive:false});
+  });
+})();
+
+/* ── 横竖屏：手机竖握时整体旋转为横屏布局；横握或电脑端正常显示 ── */
+(function(){
+  const app=document.getElementById('app'), hint=document.getElementById('rotateHint');
+  let hintShown=false;
+  function applyAspect(){
+    ROT.on = IS_TOUCH && ROT.pref && innerHeight>innerWidth;
+    document.documentElement.classList.toggle('rot', ROT.on);
+    document.documentElement.classList.toggle('short', IS_TOUCH && appH() < 520);   // 手机横屏布局
+    if(ROT.on){
+      app.style.width=innerHeight+'px'; app.style.height=innerWidth+'px';
+      app.style.transform=`translateX(${innerWidth}px) rotate(90deg)`;
+      if(!hintShown){ hintShown=true; hint.classList.add('show'); setTimeout(()=>hint.classList.remove('show'),2600); }
+    }else{
+      app.style.width=app.style.height=app.style.transform='';
+    }
+    camera.aspect=appW()/appH();
+    camera.fov = camera.aspect<1 ? 58 : 42;   // 竖屏（关闭横屏显示时）加大视场，球体完整可见
+    camera.updateProjectionMatrix();
+    renderer.setSize(appW(),appH());
+    dispatchEvent(new Event('appresize'));
+  }
+  window.__applyAspect = applyAspect;
+  document.getElementById('lyRotate').onchange=e=>{
+    ROT.pref=e.target.checked;
+    try{ localStorage.setItem('rotLandscape', ROT.pref?'1':'0'); }catch(err){}
+    applyAspect();
+  };
+  document.getElementById('lyRotate').checked=ROT.pref;
+  addEventListener('orientationchange', ()=>setTimeout(applyAspect,200));
+  addEventListener('resize', applyAspect);
+  applyAspect();   // 初次应用
+})();
+
+/* ── 渲染循环 ── */
+function animate(t){
+  requestAnimationFrame(animate);
+  /* 拖拽跟手：按相机到地表的距离换算每像素旋转角，使鼠标下的地表点随鼠标移动；
+     滚轮同理按离地高度缩放，贴近地表时不再一步冲太远 */
+  const dCam=camera.position.length(), hCam=dCam-R;
+  controls.rotateSpeed = hCam*Math.tan(camera.fov*DEG/2)/(Math.PI*R);
+  controls.zoomSpeed = Math.min(1, 1.5*hCam/dCam);
+  controls.update();
+  /* 光源跟随相机但从画面左上方斜照（地形图标准光向）：看向的半球始终被照亮，
+     地形起伏有明暗立体感，且球心不会出现正对镜头的"打光"高亮 */
+  { const m=camera.matrixWorld.elements;   // 列 0=右，列 1=上，列 2=镜头后方
+    uniforms.uLight.value.set(-.45*m[0]+.55*m[4]+m[8], -.45*m[1]+.55*m[5]+m[9], -.45*m[2]+.55*m[6]+m[10]).normalize(); }
+  const d=camera.position.length();
+  /* 标注：背面隐藏、靠近边缘淡出；离得越近显示越多小国 */
+  const minArea=60*Math.pow(hCam/200,2)*Math.max(1,Math.pow(800/appH(),2))*Math.min(1,Math.pow(hCam/70,3)), cp=camera.position;   // 拉得很近时（离地 <70）逐步放宽，新加坡这类小国也能显示   // 屏幕越小，显示的小国越少，减少重叠
+  labelGroup.children.forEach(sp=>{
+    const p=sp.position, pl=p.length();
+    const facing=(p.x*(cp.x-p.x)+p.y*(cp.y-p.y)+p.z*(cp.z-p.z))/(pl*cp.distanceTo(p));
+    const edge=Math.min(1,Math.max(0,(facing-.08)/.17));
+    const size=sp.userData.name===focusName ? 1 : Math.min(1,Math.max(0,(sp.userData.area/minArea-.6)/.6));
+    const o = d>620 ? 0 : edge*size;
+    sp.material.opacity=o; sp.visible=o>.01;
+  });
+  if(marker.visible){   // 转到地球背面时隐藏红点
+    const p=marker.position; pin.visible=(p.x*(cp.x-p.x)+p.y*(cp.y-p.y)+p.z*(cp.z-p.z))>0;
+  }
+  if(marker.visible) marker.scale.setScalar(   // 红点按屏幕像素保持固定大小（与屏幕高度无关）
+    camera.position.distanceTo(marker.position)*2*Math.tan(camera.fov*DEG/2)*PIN_PX/appH()/3.3);
+  renderer.render(scene,camera);
+}
+animate(0);
+
+
+main().catch(e => fail(e && e.message || String(e)));
+renderer.domElement.addEventListener('webglcontextlost', () => {
+  document.getElementById('loader').classList.remove('off');
+  fail('显卡内存不足，3D 画面已中断，请关闭其他标签页后刷新');
+});
+</script>
+</body>
+</html>
