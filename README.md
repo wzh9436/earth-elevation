@@ -47,3 +47,4 @@ python3 tools/build_offline.py   # 生成中英文两个单文件离线版
 ---
 
 Copyright © 2026 wzh. Licensed under [CC BY-NC 4.0](LICENSE) — free for non-commercial use with attribution; for commercial use please contact the author ([@wzh9436](https://github.com/wzh9436)). Third-party data and libraries keep their own licenses (see "Data & License" in the app).
+
