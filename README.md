@@ -40,11 +40,11 @@ python3 tools/build_offline.py   # 生成中英文两个单文件离线版
 - 经典位置：各高峰、海沟等的官方测量值
 
 ## 许可
-界面、程序与整合方式 © 2026 wzh，采用 [CC BY-NC 4.0](LICENSE)（署名-非商业性使用）：可免费使用、分享、改编，须署名并注明改动，不得用于商业目的。**商用请联系作者**（GitHub：[@wzh9436](https://github.com/wzh9436)）。
+界面、程序与整合方式 © 2026 wzh，采用 [CC BY-NC 4.0](LICENSE)（署名-非商业性使用）：可免费使用、分享、改编，须署名并注明改动，不得用于商业目的。**商用请联系作者**：wzh9436@protonmail.com（一般问题请提 [Issue](https://github.com/wzh9436/earth-elevation/issues)；GitHub：[@wzh9436](https://github.com/wzh9436)）。
 
 第三方数据与程序库保持各自的原许可（SRTM、GMTED2010、ETOPO1、NRCan CDEM、GEBCO、Natural Earth、three.js 等），署名清单见页面内「数据与许可」，非商业限制只适用于本项目的原创部分。
 
 ---
 
-Copyright © 2026 wzh. Licensed under [CC BY-NC 4.0](LICENSE) — free for non-commercial use with attribution; for commercial use please contact the author ([@wzh9436](https://github.com/wzh9436)). Third-party data and libraries keep their own licenses (see "Data & License" in the app).
+Copyright © 2026 wzh. Licensed under [CC BY-NC 4.0](LICENSE) — free for non-commercial use with attribution; for commercial use please contact the author at wzh9436@protonmail.com (general questions: [Issues](https://github.com/wzh9436/earth-elevation/issues); GitHub: [@wzh9436](https://github.com/wzh9436)). Third-party data and libraries keep their own licenses (see "Data & License" in the app).
 
